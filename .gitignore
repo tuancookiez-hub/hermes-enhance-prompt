@@ -1,0 +1,10 @@
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+.hermes/
+NOW.md
+handoff.md
+*.log

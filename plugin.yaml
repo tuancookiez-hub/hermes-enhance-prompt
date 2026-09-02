@@ -1,0 +1,8 @@
+name: enhance-prompt
+version: 0.1.0
+manifest_version: 1
+description: Sparkle beside Send that rewrites the composer draft without sending it.
+author: tuancookiez-hub
+homepage: https://github.com/tuancookiez-hub/hermes-enhance-prompt
+license: MIT
+hooks: []
