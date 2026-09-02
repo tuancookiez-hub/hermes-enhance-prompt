@@ -12,6 +12,8 @@
  * Ctrl/Cmd+K runs the same action.
  */
 
+console.log("[enhance-prompt] plugin.js loaded v2026-09-02-2", new Date().toISOString());
+
 import { jsx } from "react/jsx-runtime";
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
