@@ -7,7 +7,7 @@ Sparkle beside Send on [Hermes Desktop](https://hermes-agent.nousresearch.com). 
 - Click while spinning to cancel the wait
 - Ctrl/Cmd+K → **Enhance prompt**
 
-Uses your current Desktop model via a hidden Hermes session. Same language as the original. Does not invent tech you did not name. Does not answer the question — it expands it.
+Uses your current Desktop model via a hidden Hermes session. Same language as the original. Does not invent tech you did not name. Does not answer the question — it expands it into a numbered task list (`1. 2. 3.`).
 
 ## Install (paste this into Hermes)
 

@@ -42,7 +42,7 @@ Apply these prompt engineering principles:
 Write clear, specific instructions
 Include necessary context
 Set explicit parameters and constraints
-Structure the output format
+Structure the output as a numbered task list
 Add relevant examples
 Match tone and complexity to the use case
 Remove redundant information
@@ -60,6 +60,7 @@ Do NOT answer questions - expand/rewrite them to be more detailed
 IMPORTANT CONSTRAINTS:
 1. Language matching is the highest priority - You MUST strictly respond in the exact same language as the user's input. If the user writes in Chinese, respond in Chinese; if the user writes in English, respond in English; if the user uses another language, respond in that same language. Do not mix languages unless the user's input itself mixes languages.
 2. Keep the enhanced prompt concise - maximum length should be around 800 characters
+3. NUMBERED LIST IS REQUIRED - write the enhanced prompt as a short goal line, then numbered steps (1. 2. 3.). Use 3-7 items. Each item is one concrete ask. Prefer "1." over bullets or a single paragraph. Only skip numbering if the input is already a single atomic question that cannot be split.
 FORMAT: Provide only the enhanced prompt with no additional commentary.`
 
 const USER_WRAP = `You are a prompt enhancement assistant. Improve the user prompt while preserving its intent and language.
@@ -83,9 +84,25 @@ ENHANCEMENT REQUIREMENTS:
 2. Do not include language labels or meta notes such as "User input is in Chinese" or "Response must be in Chinese".
 3. Preserve the user's original intent, topic, constraints, and target output type. Do not answer the request.
 4. Always make a substantive enhancement when possible: clarify the task, scope, constraints, and expected output.
-5. If the original prompt is already clear, lightly polish it instead of returning it unchanged.
-6. Keep the enhanced prompt complete and concise. Do not end with an unfinished list, dangling conjunction, or trailing colon.
-7. Do not add unrelated requirements, unsupported facts, or unnecessary sections.`
+5. Format as a numbered list: one short goal line, then 3-7 numbered steps (1. 2. 3.). Each step is one concrete ask. Do not use bullets. Do not write a single paragraph. Only skip numbering if the input is already one atomic question that cannot be split.
+6. If the original prompt is already numbered, keep that numbering and only tighten the items.
+7. Keep the enhanced prompt complete and concise. Do not end with an unfinished list, dangling conjunction, or trailing colon.
+8. Do not add unrelated requirements, unsupported facts, or unnecessary sections.
+
+EXAMPLES:
+User input: "fix the login"
+Enhanced prompt:
+Fix the login flow.
+1. Identify why login currently fails.
+2. Apply a minimal fix that preserves existing auth behavior.
+3. Confirm a user can sign in and see the expected next screen.
+
+User input: "请帮我解释这段代码"
+Enhanced prompt:
+请解释这段代码。
+1. 说明主要功能。
+2. 按执行顺序列出关键逻辑。
+3. 指出需要注意的边界情况。`
 
 function unwrap(res) {
   if (!res || typeof res !== 'object') return {}
