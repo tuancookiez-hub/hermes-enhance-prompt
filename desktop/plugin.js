@@ -28,6 +28,10 @@ const MAX_LEN = 800
 const POLL_MS = 400
 const TIMEOUT_MS = 45000
 
+// Rewrite prompt lives in prompts.py so the agent-side /enhance slash command
+// and enhance_prompt tool stay byte-identical to what the sparkle sends. The
+// inline copy below is the agent-prompt contract; any edit here must also
+// update prompts.py (and vice versa). Keep them in sync.
 const SYSTEM = `You are a Prompt Engineering Expert specializing in improving user prompts for a development code assistant. When given a prompt, analyze and enhance it to create a more effective version while maintaining its core purpose. The requests are being made to an AI assistant that specializes in writing code.
 
 TASK: When given a prompt, analyze and enhance it to create a more effective version while maintaining its core purpose.
@@ -166,10 +170,12 @@ function writeDraft(text) {
 
 function stripQuotes(text) {
   return String(text || '')
-    .trim()
-    .replace(/^["'`“”‘’]+|["'`“”‘’]+$/g, '')
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/^<\|[\w:-]+\|>[^\n]*\n?/gm, '')
     .replace(/^```[a-zA-Z0-9_-]*\n?/, '')
     .replace(/\n?```$/, '')
+    .trim()
+    .replace(/^['"`\u201c\u201d\u2018\u2019]+|['"`\u201c\u201d\u2018\u2019]+$/g, '')
     .trim()
 }
 

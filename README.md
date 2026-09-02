@@ -19,12 +19,18 @@ Messy draft → sparkle → numbered ask. It does not send.
 
 Higher-quality MP4: [assets/demo-enhance-prompt.mp4](assets/demo-enhance-prompt.mp4)
 
-## Install (paste this into Hermes)
+---
+
+## Desktop: the sparkle
+
+### Install (paste into Hermes to have another agent do it)
 
 ```
 Install the enhance-prompt plugin from tuancookiez-hub/hermes-enhance-prompt.
 
-1. Run: hermes plugins install tuancookiez-hub/hermes-enhance-prompt
+1. Clone or pull the repo:
+   git clone https://github.com/tuancookiez-hub/hermes-enhance-prompt.git
+   cd hermes-enhance-prompt
 2. Copy desktop/plugin.js to:
    <HERMES_HOME>/desktop-plugins/enhance-prompt/plugin.js
    Folder name MUST be enhance-prompt.
@@ -33,7 +39,12 @@ Install the enhance-prompt plugin from tuancookiez-hub/hermes-enhance-prompt.
 4. Type in the composer and click the sparkle next to Send.
 ```
 
-`HERMES_HOME` is normally `%LOCALAPPDATA%\hermes` on Windows, `~/.hermes` on macOS/Linux.
+`HERMES_HOME` is normally `%LOCALAPPDATA%\hermes` on Windows,
+`~/.hermes` on macOS/Linux.
+
+> **Note:** `hermes plugins install` installs *Python agent plugins* (the kind
+> documented at `hermes-agent.nousresearch.com`). Enhance Prompt is a
+> *Desktop UI plugin* — a different runtime. Follow step 2 above instead.
 
 Manual copy if you skip the installer:
 
@@ -47,7 +58,7 @@ Manual copy if you skip the installer:
 
 The Desktop watches that folder. Drop the file in; no `npm run pack`.
 
-## How it works
+### How the sparkle works
 
 1. Reads the composer (`data-slot="composer-rich-input"`)
 2. Hidden `session.create` + rewrite system prompt
@@ -57,11 +68,32 @@ The Desktop watches that folder. Drop the file in; no `npm run pack`.
 
 Cancel is UI-only. The hidden session may still finish.
 
+---
+
+## Agent: `/enhance` + `enhance_prompt` tool
+
+This repo also registers a slash command and a tool so the rewrite logic works
+from the CLI, gateway, MCP hosts, and any other surface that picks up agent plugins:
+
+```
+/enhance fix the login flow
+```
+
+or via the `enhance_prompt` tool:
+
+```
+enhance_prompt(input="fix the login", max_chars=600)
+```
+
+Both paths use the same rewrite prompt as the Desktop sparkle.
+
+---
+
 ## Limits
 
-- Needs a live Desktop gateway and a working model
-- Costs one model turn per click
-- Plugins cannot call `setComposerDraft` on the public SDK, so the write path is DOM-based
+- Desktop sparkle needs a live Desktop gateway and a working model
+- Desktop sparkle costs one model turn per click
+- Plugins cannot call `setComposerDraft` on the public SDK, so the Desktop write path is DOM-based
 - Empty drafts under 8 characters are ignored
 
 ## Installing-agent notes

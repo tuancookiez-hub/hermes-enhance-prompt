@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+- `prompts.py` extracted as a shared module — the Desktop sparkle and the agent
+  tool now use identical rewrite templates.
+
 ## [0.1.0] — 2026-09-02
 
 ### Added
