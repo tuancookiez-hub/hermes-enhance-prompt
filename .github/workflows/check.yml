@@ -17,7 +17,7 @@ jobs:
           node-version: "20"
       - run: node --check desktop/plugin.js
 
-      - name: Python syntax + YAML validation
+      - name: Python syntax + YAML + prompt tests
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -31,3 +31,4 @@ jobs:
           yaml.safe_load(open('plugin.yaml').read())
           print('yaml ok')
           "
+      - run: python tests/test_prompts.py

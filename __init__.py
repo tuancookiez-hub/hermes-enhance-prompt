@@ -125,4 +125,5 @@ def register(ctx) -> None:
         name="enhance",
         description="Rewrite a prompt as a numbered task list. Usage: /enhance <text>",
         handler=_slash_enhance,
+        args_hint="<prompt text>",
     )

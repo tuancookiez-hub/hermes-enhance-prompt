@@ -1,5 +1,9 @@
 """Shared prompt templates for Enhance Prompt."""
 
+from __future__ import annotations
+
+import re
+
 MAX_CHARS = 1200
 
 SYSTEM = """You are a prompt engineer. Rewrite user requests into clear, well-structured agent prompts.
@@ -40,15 +44,25 @@ USER_TEMPLATE = """Rewrite this request as an agent prompt:
 
 ---"""
 
+_THINK = re.compile(r"<think>[\s\S]*?</think>", re.IGNORECASE)
+_CHANNEL = re.compile(r"^<\|[\w:-]+\|>[^\n]*\n?", re.MULTILINE)
+_FENCE_OPEN = re.compile(r"^```[a-zA-Z0-9_-]*\n?")
+_FENCE_CLOSE = re.compile(r"\n?```$")
+_QUOTES = re.compile(r"""^['"`\u201c\u201d\u2018\u2019]+|['"`\u201c\u201d\u2018\u2019]+$""")
+
+
 def build_user_message(input_text: str) -> str:
     return USER_TEMPLATE.replace("{input}", input_text)
 
+
 def strip_wrappers(text: str) -> str:
-    return (
-        text.replace("<｜", "")
-            .replace("｜>", "")
-            .replace("<think>", "")
-            .replace("</think>", "")
-            .replace("<|", "")
-            .replace("|>", "")
-    ).strip()
+    """Strip thinking blocks, channel wrappers, fences, and outer quotes."""
+    if not text:
+        return ""
+    s = _THINK.sub("", str(text))
+    s = _CHANNEL.sub("", s)
+    s = s.replace("<｜", "").replace("｜>", "")
+    s = _FENCE_OPEN.sub("", s)
+    s = _FENCE_CLOSE.sub("", s)
+    s = _QUOTES.sub("", s.strip())
+    return s.strip()

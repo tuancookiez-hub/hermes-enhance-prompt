@@ -19,6 +19,7 @@
 - Import `jsx` from `react/jsx-runtime` and React hooks from `react` (SDK only exports `useValue`).
 - Revert no longer pastes the original on top of the enhanced draft.
 - Score lives inside the sparkle button (composer `actions` slot clips siblings).
+- `/enhance` slash command declares `args_hint="<prompt text>"`.
 
 ## [0.1.0] — 2026-09-02
 
