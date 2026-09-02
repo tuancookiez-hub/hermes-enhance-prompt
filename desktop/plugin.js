@@ -13,13 +13,10 @@
  */
 
 import { jsx } from "react/jsx-runtime";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   host,
   useValue,
-  useCallback,
-  useEffect,
-  useState,
-  useRef,
   COMPOSER_AREAS,
   PALETTE_AREA,
   KEYBINDS_AREA,
