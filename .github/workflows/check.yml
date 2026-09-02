@@ -10,15 +10,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Node syntax check
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
       - run: node --check desktop/plugin.js
-      - name: Python syntax check
+
+      - name: Python syntax + YAML validation
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-      - run: python -c "import ast, pathlib; [ast.parse(p.read_text()) for p in pathlib.Path('.').rglob('*.py')]"
-      - name: YAML validation
-        run: python -c "import yaml,sys; yaml.safe_load(open('plugin.yaml')); print('yaml ok')"
+          python-version: "3.11"
+      - run: pip install pyyaml --quiet
+      - run: |
+          python -c "
+          import ast, pathlib, yaml
+          for p in pathlib.Path('.').rglob('*.py'):
+              ast.parse(p.read_text(encoding='utf-8'))
+          print('python ok')
+          yaml.safe_load(open('plugin.yaml').read())
+          print('yaml ok')
+          "

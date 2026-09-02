@@ -1,6 +1,11 @@
 name: enhance-prompt
 version: 0.2.0
-description: Sparkle beside Send + a /enhance slash command + an enhance_prompt tool, all sharing one prompt-rewrite prompt.
+description: Sparkle beside Send that rewrites the composer draft as a numbered task list, plus a /enhance slash command and an enhance_prompt tool callable from CLI, gateway, and MCP.
 author: tuancookiez-hub
 homepage: https://github.com/tuancookiez-hub/hermes-enhance-prompt
 license: MIT
+provides:
+  tools:
+    - enhance_prompt
+  commands:
+    - enhance
