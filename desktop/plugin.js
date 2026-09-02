@@ -300,7 +300,7 @@ function EnhanceButton() {
   const [hasBackup, setHasBackup] = useState(false);
   const [error, setError] = useState("");
   const [hasText, setHasText] = useState(false);
-  const [lastScore, setLastScore] = useState(null);
+  const [lastScore, setLastScore] = useState(null); // { before: N, after: N } | null
 
   const backup = useRef(null);
   const after = useRef(null);
@@ -362,7 +362,7 @@ function EnhanceButton() {
     setEnhancing(true);
     setError("");
     backup.current = text;
-    setLastScore(null);
+    setLastScore({ before: score(text), after: 0 });
 
     try {
       const enhanced = stripQuotes(await enhanceOnce(text, ac.signal));
@@ -398,7 +398,7 @@ function EnhanceButton() {
 
       writeDraft(clipped);
       after.current = readDraft();
-      setLastScore(score(clipped));
+      setLastScore({ before: score(backup.current), after: score(clipped) });
       setHasBackup(true);
     } catch (err) {
       if (err?.name === "AbortError") return;
@@ -420,9 +420,9 @@ function EnhanceButton() {
     : enhancing
     ? "Enhancing… click to cancel"
     : hasBackup
-    ? `Revert to original (${lastScore != null ? "scored " + lastScore + "/100" : "no change"})`
-    : lastScore != null
-    ? `Enhanced (${lastScore}/100) — click again to enhance more`
+    ? `Revert to original (${lastScore && lastScore.after ? lastScore.before + " → " + lastScore.after + "/100" : "no change"})`
+    : lastScore && lastScore.after
+    ? `Enhanced (${lastScore.before} → ${lastScore.after}/100) — click again to enhance more`
     : "Enhance prompt";
 
   return jsx("div", {
@@ -456,12 +456,22 @@ function EnhanceButton() {
               key: "score",
               className: cn(
                 "select-none text-[10px] font-mono tabular-nums",
-                scoreClass(lastScore)
+                scoreClass(lastScore.after || 0)
               ),
-              title: `Quality score: ${lastScore}/100`,
-              "aria-label": `Score ${lastScore} of 100`,
+              title:
+                "Quality: " +
+                (lastScore.before || 0) +
+                " → " +
+                (lastScore.after || 0) +
+                "/100",
+              "aria-label":
+                "Score " +
+                (lastScore.before || 0) +
+                " to " +
+                (lastScore.after || 0) +
+                " of 100",
             },
-            lastScore.toString()
+            (lastScore.before || 0) + " \u2192 " + (lastScore.after || 0)
           )
         : null,
     ],
