@@ -4,12 +4,13 @@
 
 Sparkle beside Send on [Hermes Desktop](https://hermes-agent.nousresearch.com). Click it to rewrite the composer draft. It does **not** send the message.
 
-- Type a messy prompt → sparkle → clearer, more specific draft as `1. 2. 3.`
-- Click again to revert
+- Messy draft → sparkle → numbered agent brief
+- Score on the button: `40→72` (before → after)
+- Click the discard icon to revert (replaces the draft, does not append)
 - Click while spinning to cancel the wait
 - Ctrl/Cmd+K → **Enhance prompt**
 
-Uses your current Desktop model via a hidden Hermes session. Same language as the original. Does not invent tech you did not name. Does not answer the question — it expands it into a numbered task list.
+Uses your **current Desktop model** via a hidden Hermes session. Same language as the original. Does not invent tech you did not name. Does not answer the question — it expands it.
 
 ## Demo
 
@@ -21,6 +22,22 @@ Higher-quality MP4: [assets/demo-enhance-prompt.mp4](assets/demo-enhance-prompt.
 
 ---
 
+## What the rewrite looks like
+
+**Short / already-clear input** → tight 1–3 numbered steps.
+
+**Substantive input** → a production-grade brief, only the sections that apply:
+
+1. Goal
+2. Role & context
+3. Scope (IN / OUT)
+4. Requirements (3–7 numbered, each one action)
+5. Deliverable
+6. Quality gates
+7. Anti-patterns
+
+---
+
 ## Desktop: the sparkle
 
 ### Install (paste into Hermes to have another agent do it)
@@ -28,7 +45,7 @@ Higher-quality MP4: [assets/demo-enhance-prompt.mp4](assets/demo-enhance-prompt.
 ```
 Install the enhance-prompt plugin from tuancookiez-hub/hermes-enhance-prompt.
 
-1. Clone or pull the repo:
+1. Clone or pull:
    git clone https://github.com/tuancookiez-hub/hermes-enhance-prompt.git
    cd hermes-enhance-prompt
 2. Copy desktop/plugin.js to:
@@ -39,14 +56,11 @@ Install the enhance-prompt plugin from tuancookiez-hub/hermes-enhance-prompt.
 4. Type in the composer and click the sparkle next to Send.
 ```
 
-`HERMES_HOME` is normally `%LOCALAPPDATA%\hermes` on Windows,
-`~/.hermes` on macOS/Linux.
+`HERMES_HOME` is normally `%LOCALAPPDATA%\hermes` on Windows, `~/.hermes` on macOS/Linux.
 
-> **Note:** `hermes plugins install` installs *Python agent plugins* (the kind
-> documented at `hermes-agent.nousresearch.com`). Enhance Prompt is a
-> *Desktop UI plugin* — a different runtime. Follow step 2 above instead.
+> **Two plugin systems.** `hermes plugins install` installs the *Python agent* half (`/enhance` + `enhance_prompt` tool). The sparkle is a *Desktop UI* plugin — copy `desktop/plugin.js` as above. Both can live in this one repo.
 
-Manual copy if you skip the installer:
+Manual copy:
 
 ```
 # default profile
@@ -61,10 +75,11 @@ The Desktop watches that folder. Drop the file in; no `npm run pack`.
 ### How the sparkle works
 
 1. Reads the composer (`data-slot="composer-rich-input"`)
-2. Hidden `session.create` + rewrite system prompt
+2. Hidden `session.create` + rewrite system prompt (uses the **active** model)
 3. `prompt.submit` the draft
 4. Polls `session.history` until the assistant text settles
-5. Replaces the box with `document.execCommand('insertText')` so the Desktop draft engine sees it
+5. **Selects all** then `insertText` so the draft is replaced, not appended
+6. Shows `before→after` quality score inside the sparkle button
 
 Cancel is UI-only. The hidden session may still finish.
 
@@ -72,33 +87,37 @@ Cancel is UI-only. The hidden session may still finish.
 
 ## Agent: `/enhance` + `enhance_prompt` tool
 
-This repo also registers a slash command and a tool so the rewrite logic works
-from the CLI, gateway, MCP hosts, and any other surface that picks up agent plugins:
+Same rewrite logic from CLI, gateway, and MCP:
+
+```
+hermes plugins install tuancookiez-hub/hermes-enhance-prompt
+```
+
+Then:
 
 ```
 /enhance fix the login flow
 ```
 
-or via the `enhance_prompt` tool:
+or the tool:
 
 ```
-enhance_prompt(input="fix the login", max_chars=600)
+enhance_prompt(input="fix the login", max_chars=1200)
 ```
-
-Both paths use the same rewrite prompt as the Desktop sparkle.
 
 ---
 
 ## Limits
 
 - Desktop sparkle needs a live Desktop gateway and a working model
-- Desktop sparkle costs one model turn per click
-- Plugins cannot call `setComposerDraft` on the public SDK, so the Desktop write path is DOM-based
-- Empty drafts under 8 characters are ignored
+- One model turn per click
+- No public `setComposerDraft` SDK — write path is DOM-based (select-all + insertText)
+- Drafts under 8 characters are ignored
+- Quality score is a local heuristic (goal line, numbered steps, action verb, specifics) — not an LLM judge
 
 ## Installing-agent notes
 
-Full install/verify/uninstall steps for an agent live in `INSTALL.md`.
+Full install / verify / uninstall: `INSTALL.md`.
 
 ## License
 
