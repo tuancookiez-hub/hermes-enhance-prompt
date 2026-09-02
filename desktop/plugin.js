@@ -425,48 +425,47 @@ function EnhanceButton() {
     ? `Enhanced (${lastScore}/100) — click again to enhance more`
     : "Enhance prompt";
 
-  return jsx(
-    "div",
-    {
-      className: "flex items-center gap-1.5",
-    },
-    jsx(Tip, {
-      label: tip,
-      children: jsx(Button, {
-        "aria-label": tip,
-        className: cn(
-          "size-(--composer-control-size) shrink-0 rounded-md",
-          "text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground",
-          (enhancing || hasBackup) && "text-foreground"
-        ),
-        disabled,
-        onClick: enhancing ? cancel : hasBackup ? revert : run,
-        size: "icon-xs",
-        type: "button",
-        variant: "ghost",
-        children: jsx(Codicon, {
-          name: enhancing ? "sync" : hasBackup ? "discard" : "sparkle",
-          size: 14,
-          spinning: enhancing,
+  return jsx("div", {
+    className: "flex items-center gap-1.5",
+    children: [
+      jsx(Tip, {
+        label: tip,
+        children: jsx(Button, {
+          "aria-label": tip,
+          className: cn(
+            "size-(--composer-control-size) shrink-0 rounded-md",
+            "text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground",
+            (enhancing || hasBackup) && "text-foreground"
+          ),
+          disabled,
+          onClick: enhancing ? cancel : hasBackup ? revert : run,
+          size: "icon-xs",
+          type: "button",
+          variant: "ghost",
+          children: jsx(Codicon, {
+            name: enhancing ? "sync" : hasBackup ? "discard" : "sparkle",
+            size: 14,
+            spinning: enhancing,
+          }),
         }),
       }),
-    }),
-    lastScore != null
-      ? jsx(
-          "span",
-          {
-            key: "score",
-            className: cn(
-              "select-none text-[10px] font-mono tabular-nums",
-              scoreClass(lastScore)
-            ),
-            title: `Quality score: ${lastScore}/100`,
-            "aria-label": `Score ${lastScore} of 100`,
-          },
-          lastScore.toString()
-        )
-      : null
-  );
+      lastScore != null
+        ? jsx(
+            "span",
+            {
+              key: "score",
+              className: cn(
+                "select-none text-[10px] font-mono tabular-nums",
+                scoreClass(lastScore)
+              ),
+              title: `Quality score: ${lastScore}/100`,
+              "aria-label": `Score ${lastScore} of 100`,
+            },
+            lastScore.toString()
+          )
+        : null,
+    ],
+  });
 }
 
 /* ─── Palette + keybind helpers ──────────────────────────────────────────── */
