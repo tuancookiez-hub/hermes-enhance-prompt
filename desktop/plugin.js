@@ -340,13 +340,30 @@ function EnhanceButton() {
   }, []);
 
   const revert = useCallback(() => {
-    if (!backup.current) return;
-    writeDraft(backup.current);
+    const text = backup.current;
+    if (!text) return;
+    // Capture refs before async work to avoid stale closures
     backup.current = null;
     after.current = null;
     setHasBackup(false);
     setLastScore(null);
     setError("");
+    // Apply the restore on the next tick so React doesn't reset the
+    // contentEditable state out from under us mid-render.
+    requestAnimationFrame(() => {
+      try {
+        writeDraft(text);
+        host.notify({
+          kind: "info",
+          message: "Reverted to original.",
+        });
+      } catch (err) {
+        host.notify({
+          kind: "error",
+          message: "Revert failed: " + (err && err.message ? err.message : String(err)),
+        });
+      }
+    });
   }, []);
 
   const run = useCallback(async () => {
@@ -399,9 +416,15 @@ function EnhanceButton() {
       }
 
       writeDraft(clipped);
-      after.current = readDraft();
-      setLastScore({ before: score(backup.current), after: score(clipped) });
-      setHasBackup(true);
+      requestAnimationFrame(() => {
+        const next = readDraft();
+        after.current = next;
+        setLastScore({
+          before: score(backup.current || ""),
+          after: score(next),
+        });
+        setHasBackup(true);
+      });
     } catch (err) {
       if (err?.name === "AbortError") return;
       const msg = err instanceof Error ? err.message : String(err);
@@ -428,12 +451,13 @@ function EnhanceButton() {
     : "Enhance prompt";
 
   return jsx("div", {
-    className: "flex items-center gap-1.5",
+    className: "inline-flex items-center gap-1.5 self-center",
     children: [
       jsx(Tip, {
         label: tip,
         children: jsx(Button, {
-          "aria-label": tip,
+          "aria-label": "Enhance prompt",
+          title: tip,
           className: cn(
             "size-(--composer-control-size) shrink-0 rounded-md",
             "text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground",
