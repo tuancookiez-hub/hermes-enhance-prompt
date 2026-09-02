@@ -1,19 +1,15 @@
 /**
  * Enhance Prompt — Desktop plugin
  *
- * Registers a sparkle button beside Send that rewrites the composer draft
- * into a well-structured agent prompt without sending it.  Click again to
- * revert.  Click while spinning to cancel.
+ * Sparkle beside Send. Click to rewrite the composer draft; click again to
+ * revert; click while spinning to cancel. A small score badge appears next
+ * to the sparkle after a successful rewrite.
  *
- * Settings:
- *   MAX_LEN   — draft character length at which we truncate output (1600)
- *   POLL_MS   — initial polling interval (ms); backs off to MAX_POLL_MS
- *   TIMEOUT   — maximum session polling time (ms)
- *   MIN_LEN   — minimum characters in draft before the sparkle activates
+ * Uses the current active model via host.request → session.create (the same
+ * one the rest of the app uses), so the rewrite is "what the current model
+ * would naturally produce, focused on prompt craft."
  *
- * Keyboard shortcut: Ctrl/Cmd+K runs the enhance action (same as clicking the
- * sparkle when it is active).  Bound and unbound each time the composer gains
- * focus so it reflects the current keymap.
+ * Ctrl/Cmd+K runs the same action.
  */
 
 import {
@@ -35,13 +31,13 @@ import {
 
 /* ─── Tunables ──────────────────────────────────────────────────────────── */
 
-const MAX_LEN = 800;          // characters → write up to 2×MAX_LEN
+const MAX_LEN = 600;          // soft target length for the rewrite
 const INIT_POLL_MS = 1200;    // first poll interval
 const MAX_POLL_MS = 3000;     // max poll interval (exponential backoff)
 const TIMEOUT_MS = 90_000;    // total session polling timeout
 const MIN_LEN = 8;            // minimum draft length to activate
 
-/* ─── Rewrite prompt (inline — must stay in sync with prompts.py) ─────────── */
+/* ─── Rewrite prompt (inline — must stay in sync with prompts.py) ───────── */
 
 const SYSTEM = `You are a prompt engineer. Rewrite user requests into clear, well-structured agent prompts.
 
@@ -68,11 +64,11 @@ Use only the sections that apply. Do not invent sections.
 ## Rules
 
 - Match the original language (English/Malay/etc.)
-- Do not answer the request — restate it as an actionable task
-- Do not add goals the user did not mention
-- Do not write tutorial-style output ("First, do X, then Y...")
+- Do NOT answer the request — restate it as an actionable task
+- Do NOT add goals the user did not mention
+- Do NOT write tutorial-style output ("First, do X, then Y...")
 - Prefer concrete nouns over vague ones ("table" not "the data structure")
-- Cap output at 1600 characters`;
+- Cap output at 1200 characters`;
 
 const USER_WRAP = `Rewrite this request as an agent prompt:
 
@@ -116,7 +112,6 @@ function composerEl() {
   const nodes = document.querySelectorAll(`[data-slot="${COMPOSER_SLOT}"]`);
   for (const n of nodes) {
     if (!(n instanceof HTMLElement)) continue;
-    // offsetParent === null means hidden; we also check getClientRects
     if (n.offsetParent !== null || n.getClientRects().length) return n;
   }
   return nodes[0] instanceof HTMLElement ? nodes[0] : null;
@@ -137,10 +132,9 @@ function writeDraft(text) {
 
   el.focus();
   try {
-    // Save and restore caret so typing continues at the end of the new text.
     const range = document.createRange();
     range.selectNodeContents(el);
-    range.collapse(false); // collapse to end
+    range.collapse(false);
     const sel = window.getSelection();
     sel.removeAllRanges();
     sel.addRange(range);
@@ -159,7 +153,7 @@ function writeDraft(text) {
   el.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-/* ─── Model-output cleaning ──────────────────────────────────────────────── */
+/* ─── Output cleaning ────────────────────────────────────────────────────── */
 
 function stripQuotes(text) {
   return String(text || "")
@@ -194,6 +188,50 @@ function lastAssistant(messages) {
     if (typeof m.text === "string") return m.text;
   }
   return "";
+}
+
+/* ─── Simple quality score (0-100) ─────────────────────────────────────────── */
+
+const ACTION_VERBS = new Set([
+  "build", "create", "make", "fix", "write", "add", "remove", "update", "edit",
+  "design", "implement", "deploy", "test", "review", "refactor", "rewrite",
+  "ship", "merge", "open", "close", "send", "list", "check", "find", "search",
+  "read", "parse", "render", "save", "load", "install", "configure", "set",
+  "delete", "sort", "filter", "show", "explain", "describe", "compare",
+  "analyze", "analyse", "measure", "log", "track", "monitor", "schedule",
+  "generate", "compute", "calculate", "draft", "plan", "break", "split",
+  "combine", "merge", "tag", "label", "rename", "move", "copy", "export",
+  "import", "submit", "validate", "verify", "confirm", "ensure", "trace",
+]);
+
+function score(text) {
+  if (!text) return 0;
+  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+  if (lines.length === 0) return 0;
+  const numbered = lines.filter((l) => /^\d+\.\s/.test(l)).length;
+  const hasGoal = /[A-Z].{5,}/.test(lines[0]) && !/^\d/.test(lines[0]);
+
+  const lower = text.toLowerCase();
+  const wordCount = lower.split(/\s+/).length;
+  const firstWord = (lower.split(/\s+/)[0] || "").replace(/[^a-z]/g, "");
+  const hasVerb = ACTION_VERBS.has(firstWord);
+  const hasSpecifics = /\b(file|table|column|class|function|method|module|component|api|endpoint|test|case|user|customer|order|product|item|message|thread|task|ticket|issue|branch|commit|pr|deploy|build|run|test|sprint)\b/i.test(text);
+
+  // Baseline 40 (any non-empty prompt passes), bonuses up to 60.
+  let s = 40;
+  if (hasGoal) s += 10;
+  if (numbered >= 1) s += Math.min(20, numbered * 4);
+  if (hasVerb) s += 10;
+  if (hasSpecifics) s += 10;
+  if (wordCount >= 30 && wordCount <= 200) s += 10;
+  return Math.max(0, Math.min(100, s));
+}
+
+function scoreClass(s) {
+  if (s >= 80) return "text-emerald-500";
+  if (s >= 60) return "text-amber-500";
+  if (s >= 40) return "text-muted-foreground";
+  return "text-muted-foreground/60";
 }
 
 /* ─── Rewrite session ─────────────────────────────────────────────────────── */
@@ -236,9 +274,7 @@ async function enhanceOnce(input, signal) {
   while (Date.now() - start < TIMEOUT_MS) {
     if (signal?.aborted) throw new DOMException("aborted", "AbortError");
     try {
-      const hist = await rpc("session.history", {
-        session_id: sid,
-      });
+      const hist = await rpc("session.history", { session_id: sid });
       const next = stripQuotes(
         lastAssistant(hist.messages || hist.history || [])
       );
@@ -253,7 +289,6 @@ async function enhanceOnce(input, signal) {
       /* keep polling */
     }
     await sleep(pollMs, signal);
-    // Exponential backoff capped at MAX_POLL_MS.
     pollMs = Math.min(pollMs * 1.5, MAX_POLL_MS);
   }
   if (last) return last;
@@ -268,16 +303,15 @@ function EnhanceButton() {
   const [hasBackup, setHasBackup] = useState(false);
   const [error, setError] = useState("");
   const [hasText, setHasText] = useState(false);
+  const [lastScore, setLastScore] = useState(null);
 
-  const backup = useRef(null);   // original draft
-  const after = useRef(null);    // draft after last enhance
-  const abort = useRef(null);    // AbortController for current run
+  const backup = useRef(null);
+  const after = useRef(null);
+  const abort = useRef(null);
 
-  // ── Update hasText and auto-clear stale backup ───────────────────────────
   const refreshHasText = useCallback(() => {
     const text = readDraft();
     setHasText(text.length >= MIN_LEN);
-    // If the draft diverged from the last enhanced state, discard the backup.
     if (hasBackup && after.current && text !== after.current) {
       backup.current = null;
       after.current = null;
@@ -300,24 +334,22 @@ function EnhanceButton() {
     };
   }, [refreshHasText]);
 
-  // ── Cancel running enhance ───────────────────────────────────────────────
   const cancel = useCallback(() => {
     abort.current?.abort();
     abort.current = null;
     setEnhancing(false);
   }, []);
 
-  // ── Revert to original ─────────────────────────────────────────────────
   const revert = useCallback(() => {
     if (!backup.current) return;
     writeDraft(backup.current);
     backup.current = null;
     after.current = null;
     setHasBackup(false);
+    setLastScore(null);
     setError("");
   }, []);
 
-  // ── Run enhance ─────────────────────────────────────────────────────────
   const run = useCallback(async () => {
     const text = readDraft();
     if (text.length < MIN_LEN) {
@@ -333,6 +365,7 @@ function EnhanceButton() {
     setEnhancing(true);
     setError("");
     backup.current = text;
+    setLastScore(null);
 
     try {
       const enhanced = stripQuotes(await enhanceOnce(text, ac.signal));
@@ -355,10 +388,7 @@ function EnhanceButton() {
         });
       }
 
-      // Auto-revert silently if the model returned the same text.
-      if (
-        clipped.trim() === backup.current.trim()
-      ) {
+      if (clipped.trim() === backup.current.trim()) {
         backup.current = null;
         after.current = null;
         setHasBackup(false);
@@ -371,6 +401,7 @@ function EnhanceButton() {
 
       writeDraft(clipped);
       after.current = readDraft();
+      setLastScore(score(clipped));
       setHasBackup(true);
     } catch (err) {
       if (err?.name === "AbortError") return;
@@ -392,33 +423,56 @@ function EnhanceButton() {
     : enhancing
     ? "Enhancing… click to cancel"
     : hasBackup
-    ? "Revert to original"
+    ? `Revert to original (${lastScore != null ? "scored " + lastScore + "/100" : "no change"})`
+    : lastScore != null
+    ? `Enhanced (${lastScore}/100) — click again to enhance more`
     : "Enhance prompt";
 
-  return jsx(Tip, {
-    label: tip,
-    children: jsx(Button, {
-      "aria-label": tip,
-      className: cn(
-        "size-(--composer-control-size) shrink-0 rounded-md",
-        "text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground",
-        (enhancing || hasBackup) && "text-foreground"
-      ),
-      disabled,
-      onClick: enhancing ? cancel : hasBackup ? revert : run,
-      size: "icon-xs",
-      type: "button",
-      variant: "ghost",
-      children: jsx(Codicon, {
-        name: enhancing ? "sync" : hasBackup ? "discard" : "sparkle",
-        size: 14,
-        spinning: enhancing,
+  return jsx(
+    "div",
+    {
+      className: "flex items-center gap-1.5",
+    },
+    jsx(Tip, {
+      label: tip,
+      children: jsx(Button, {
+        "aria-label": tip,
+        className: cn(
+          "size-(--composer-control-size) shrink-0 rounded-md",
+          "text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground",
+          (enhancing || hasBackup) && "text-foreground"
+        ),
+        disabled,
+        onClick: enhancing ? cancel : hasBackup ? revert : run,
+        size: "icon-xs",
+        type: "button",
+        variant: "ghost",
+        children: jsx(Codicon, {
+          name: enhancing ? "sync" : hasBackup ? "discard" : "sparkle",
+          size: 14,
+          spinning: enhancing,
+        }),
       }),
     }),
-  });
+    lastScore != null
+      ? jsx(
+          "span",
+          {
+            key: "score",
+            className: cn(
+              "select-none text-[10px] font-mono tabular-nums",
+              scoreClass(lastScore)
+            ),
+            title: `Quality score: ${lastScore}/100`,
+            "aria-label": `Score ${lastScore} of 100`,
+          },
+          lastScore.toString()
+        )
+      : null
+  );
 }
 
-/* ─── Palette: click sparkle from anywhere ───────────────────────────────── */
+/* ─── Palette + keybind helpers ──────────────────────────────────────────── */
 
 function clickSparkle() {
   const tips = [
@@ -446,11 +500,10 @@ export default {
   id: "enhance-prompt",
   name: "Enhance Prompt",
   description:
-    "Sparkle beside Send that rewrites the composer draft without sending it.",
+    "Sparkle beside Send that rewrites the composer draft without sending it. Shows a small quality score next to the sparkle after each rewrite.",
   defaultEnabled: true,
 
   register(ctx) {
-    // Sparkle button beside Send.
     ctx.register({
       id: "star",
       area: COMPOSER_AREAS.actions,
@@ -458,7 +511,6 @@ export default {
       render: () => jsx(EnhanceButton, {}),
     });
 
-    // ⌘K / Ctrl+K palette command.
     ctx.register({
       id: "palette",
       area: PALETTE_AREA,
@@ -470,8 +522,6 @@ export default {
       },
     });
 
-    // Ctrl/Cmd+K keybind — re-bound on composer focus so it always matches
-    // the current keyboard layout.
     const KEY = navigator.platform.includes("Mac") ? "cmd+k" : "ctrl+k";
     ctx.register({
       id: "keybind",

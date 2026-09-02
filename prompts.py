@@ -1,10 +1,6 @@
-"""
-Shared prompt templates for Enhance Prompt.
-Both the Desktop sparkle and the agent-side /enhance tool use these.
-Keep them in sync.
-"""
+"""Shared prompt templates for Enhance Prompt."""
 
-MAX_CHARS = 1600
+MAX_CHARS = 1200
 
 SYSTEM = """You are a prompt engineer. Rewrite user requests into clear, well-structured agent prompts.
 
@@ -31,11 +27,11 @@ Use only the sections that apply. Do not invent sections.
 ## Rules
 
 - Match the original language (English/Malay/etc.)
-- Do not answer the request — restate it as an actionable task
-- Do not add goals the user did not mention
-- Do not write tutorial-style output ("First, do X, then Y...")
+- Do NOT answer the request — restate it as an actionable task
+- Do NOT add goals the user did not mention
+- Do NOT write tutorial-style output ("First, do X, then Y...")
 - Prefer concrete nouns over vague ones ("table" not "the data structure")
-- Cap output at {max_chars} characters
+- Cap output at 1200 characters
 """
 
 USER_TEMPLATE = """Rewrite this request as an agent prompt:
@@ -48,7 +44,6 @@ def build_user_message(input_text: str) -> str:
     return USER_TEMPLATE.replace("{input}", input_text)
 
 def strip_wrappers(text: str) -> str:
-    """Remove thought-wrappers, code fences, and leading/trailing quotes the model may add."""
     return (
         text.replace("<｜", "")
             .replace("｜>", "")
