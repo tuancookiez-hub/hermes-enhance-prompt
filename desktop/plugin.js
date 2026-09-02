@@ -12,6 +12,7 @@
  * Ctrl/Cmd+K runs the same action.
  */
 
+import { jsx } from "react/jsx-runtime";
 import {
   host,
   useValue,
@@ -19,7 +20,6 @@ import {
   useEffect,
   useState,
   useRef,
-  jsx,
   COMPOSER_AREAS,
   PALETTE_AREA,
   KEYBINDS_AREA,
