@@ -447,45 +447,52 @@ function EnhanceButton() {
     ? `Enhanced (${lastScore.before} → ${lastScore.after}/100) — click again to enhance more`
     : "Enhance prompt";
 
-  return jsx(Tip, {
-    label: tip,
-    children: jsx(Button, {
-      "aria-label": "Enhance prompt",
-      title: tip,
-      className: cn(
-        "h-(--composer-control-size) shrink-0 rounded-md px-1.5",
-        "text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground",
-        (enhancing || hasBackup) && "text-foreground"
-      ),
-      disabled,
-      onClick: enhancing ? cancel : hasBackup ? revert : run,
-      size: "icon-xs",
-      type: "button",
-      variant: "ghost",
-      children: jsxs("span", {
-        className: "inline-flex items-center gap-1",
-        children: [
-          jsx(Codicon, {
+  return jsxs("div", {
+    className: "flex h-(--composer-control-size) items-center gap-1",
+    children: [
+      jsx(Tip, {
+        label: tip,
+        children: jsx(Button, {
+          "aria-label": "Enhance prompt",
+          title: tip,
+          className: cn(
+            "size-(--composer-control-size) shrink-0 rounded-md",
+            "text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground",
+            (enhancing || hasBackup) && "text-foreground"
+          ),
+          disabled,
+          onClick: enhancing ? cancel : hasBackup ? revert : run,
+          size: "icon-xs",
+          type: "button",
+          variant: "ghost",
+          children: jsx(Codicon, {
             name: enhancing ? "sync" : hasBackup ? "discard" : "sparkle",
             size: 14,
             spinning: enhancing,
           }),
-          lastScore != null
-            ? jsx("span", {
-                key: "score",
-                className: cn(
-                  "font-mono text-[10px] leading-none tabular-nums",
-                  scoreClass(lastScore.after || 0)
-                ),
-                children:
-                  String(lastScore.before || 0) +
-                  "→" +
-                  String(lastScore.after || 0),
-              })
-            : null,
-        ],
+        }),
       }),
-    }),
+      lastScore != null
+        ? jsx("span", {
+            key: "score",
+            className: cn(
+              "inline-flex h-(--composer-control-size) shrink-0 items-center",
+              "font-mono text-[10px] leading-none tabular-nums",
+              scoreClass(lastScore.after || 0)
+            ),
+            title:
+              "Quality: " +
+              (lastScore.before || 0) +
+              " → " +
+              (lastScore.after || 0) +
+              "/100",
+            children:
+              String(lastScore.before || 0) +
+              "→" +
+              String(lastScore.after || 0),
+          })
+        : null,
+    ],
   });
 }
 
