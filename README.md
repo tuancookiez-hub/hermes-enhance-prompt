@@ -11,6 +11,14 @@ Sparkle beside Send on [Hermes Desktop](https://hermes-agent.nousresearch.com). 
 
 Uses your current Desktop model via a hidden Hermes session. Same language as the original. Does not invent tech you did not name. Does not answer the question — it expands it into a numbered task list.
 
+## Demo
+
+![Enhance Prompt demo](assets/demo-enhance-prompt.gif)
+
+Messy draft → sparkle → numbered ask. It does not send.
+
+Higher-quality MP4: [assets/demo-enhance-prompt.mp4](assets/demo-enhance-prompt.mp4)
+
 ## Install (paste this into Hermes)
 
 ```
