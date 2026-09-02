@@ -1,13 +1,15 @@
 # Hermes Enhance Prompt
 
+![Hero banner](assets/hero-banner.png)
+
 Sparkle beside Send on [Hermes Desktop](https://hermes-agent.nousresearch.com). Click it to rewrite the composer draft. It does **not** send the message.
 
-- Type a messy prompt → sparkle → clearer, more specific draft
+- Type a messy prompt → sparkle → clearer, more specific draft as `1. 2. 3.`
 - Click again to revert
 - Click while spinning to cancel the wait
 - Ctrl/Cmd+K → **Enhance prompt**
 
-Uses your current Desktop model via a hidden Hermes session. Same language as the original. Does not invent tech you did not name. Does not answer the question — it expands it into a numbered task list (`1. 2. 3.`).
+Uses your current Desktop model via a hidden Hermes session. Same language as the original. Does not invent tech you did not name. Does not answer the question — it expands it into a numbered task list.
 
 ## Install (paste this into Hermes)
 
