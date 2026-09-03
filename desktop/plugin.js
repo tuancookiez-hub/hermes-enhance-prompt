@@ -358,6 +358,10 @@ function EnhanceButton() {
   const after = useRef(null);
   const abort = useRef(null);
 
+  // Tiny helper to push a re-render when we update the ref-only score.
+  const [, setScoreTick] = useState(0);
+  const forceRender = useCallback(() => setScoreTick((n) => n + 1), []);
+
   const refreshHasText = useCallback(() => {
     const text = readDraft();
     setHasText(text.length >= MIN_LEN);
@@ -366,7 +370,11 @@ function EnhanceButton() {
       after.current = null;
       setHasBackup(false);
     }
-  }, [hasBackup]);
+    if (!text.trim() && lastScore.current) {
+      lastScore.current = null;
+      forceRender();
+    }
+  }, [hasBackup, forceRender]);
 
   useEffect(() => {
     refreshHasText();
@@ -516,32 +524,32 @@ function EnhanceButton() {
     }
   }, [cancel]);
 
-  // Tiny helper to push a re-render when we update the ref-only score.
-  const [, setScoreTick] = useState(0);
-  const forceRender = useCallback(() => setScoreTick((n) => n + 1), []);
-
   const disabled = enhancing ? false : !!chatBusy || !hasText;
   const ls = lastScore.current;
-  const tip = (() => {
+  const buttonTip = (() => {
     if (error) return error;
     if (enhancing) return "Enhancing… click to cancel";
-    if (hasBackup && ls && ls.after)
-      return `Revert to original\n${ls.after.parts.clarity}/5 clarity · ${ls.after.parts.specificity}/5 specificity · ${ls.after.parts.actionability}/5 actionability · ${ls.after.parts.structure}/5 structure · ${ls.after.parts.concreteness}/5 concreteness${ls.after.reason ? "\n" + ls.after.reason : ""}`;
     if (hasBackup) return "Revert to original";
-    if (ls && ls.after)
-      return `Enhanced (${ls.before ? ls.before.total : "?"} → ${ls.after.total}/100)\n${ls.after.parts.clarity}/5 clarity · ${ls.after.parts.specificity}/5 specificity · ${ls.after.parts.actionability}/5 actionability · ${ls.after.parts.structure}/5 structure · ${ls.after.parts.concreteness}/5 concreteness${ls.after.reason ? "\n" + ls.after.reason : ""}`;
-    if (ls && ls.before) return `Scoring… ${ls.before.total}/100`;
     return "Enhance prompt";
+  })();
+  const scoreTip = (() => {
+    if (!ls || !ls.after) return null;
+    const a = ls.after.parts;
+    const lines = [
+      `${ls.before ? ls.before.total : "?"} → ${ls.after.total}/100`,
+      `${a.clarity}/5 clarity · ${a.specificity}/5 specificity · ${a.actionability}/5 actionability · ${a.structure}/5 structure · ${a.concreteness}/5 concreteness`,
+    ];
+    if (ls.after.reason) lines.push(ls.after.reason);
+    return lines.join("\n");
   })();
 
   return jsxs("div", {
     className: "flex h-(--composer-control-size) items-center gap-1",
     children: [
       jsx(Tip, {
-        label: tip,
+        label: buttonTip,
         children: jsx(Button, {
-          "aria-label": "Enhance prompt",
-          title: tip,
+          "aria-label": buttonTip,
           className: cn(
             "size-(--composer-control-size) shrink-0 rounded-md",
             "text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground",
@@ -560,15 +568,17 @@ function EnhanceButton() {
         }),
       }),
       ls && ls.after
-        ? jsx("span", {
-            key: "score",
-            className: cn(
-              "inline-flex h-(--composer-control-size) shrink-0 items-center",
-              "font-mono text-[10px] leading-none tabular-nums",
-              scoreClass(ls.after.total)
-            ),
-            title: tip,
-            children: String(ls.after.total),
+        ? jsx(Tip, {
+            label: scoreTip,
+            children: jsx("span", {
+              key: "score",
+              className: cn(
+                "inline-flex h-(--composer-control-size) shrink-0 cursor-help items-center",
+                "font-mono text-[10px] leading-none tabular-nums",
+                scoreClass(ls.after.total)
+              ),
+              children: String(ls.after.total),
+            }),
           })
         : ls && ls.before
         ? jsx("span", {
