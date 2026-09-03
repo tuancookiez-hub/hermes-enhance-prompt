@@ -476,20 +476,29 @@ function EnhanceButton() {
 
       writeDraft(clipped);
 
+      // Discard icon appears the moment the rewrite lands — scoring is
+      // background work that updates the badge without holding the icon back.
+      requestAnimationFrame(() => {
+        const next = readDraft();
+        after.current = next;
+        setHasBackup(true);
+      });
+
       // Score before and after via G-EVAL. Show progress while scoring.
       try {
         const beforeScore = await geValScore(host, "ORIGINAL", backup.current || text);
         if (ac.signal.aborted) return;
-        const afterScore = await geValScore(host, "REWRITE", clipped);
-        if (ac.signal.aborted) return;
-
-        // Live-render the before/after as the scorer returns.
         if (beforeScore) {
           lastScore.current = { before: beforeScore, after: null };
           forceRender();
         }
+        const afterScore = await geValScore(host, "REWRITE", clipped);
+        if (ac.signal.aborted) return;
         if (afterScore) {
-          lastScore.current = { before: beforeScore, after: afterScore };
+          lastScore.current = {
+            before: lastScore.current ? lastScore.current.before : beforeScore,
+            after: afterScore,
+          };
           forceRender();
         }
         if (!beforeScore && !afterScore) {
@@ -499,18 +508,11 @@ function EnhanceButton() {
           });
         }
       } catch (scoreErr) {
-        // Don't fail the enhance if the scorer fails.
         host.notify({
           kind: "info",
           message: "Scorer unavailable — enhancement is live, no score.",
         });
       }
-
-      requestAnimationFrame(() => {
-        const next = readDraft();
-        after.current = next;
-        setHasBackup(true);
-      });
     } catch (err) {
       if (err?.name === "AbortError") return;
       const msg = err instanceof Error ? err.message : String(err);
@@ -581,12 +583,12 @@ function EnhanceButton() {
               children: String(ls.after.total),
             }),
           })
-        : ls && ls.before
+        : ls && ls.before && !ls.after
         ? jsx("span", {
             key: "score-pending",
             className: cn(
               "inline-flex h-(--composer-control-size) shrink-0 items-center",
-              "font-mono text-[10px] leading-none tabular-nums text-muted-foreground/60"
+              "font-mono text-[10px] leading-none tabular-nums text-muted-foreground/60 animate-pulse"
             ),
             children: "…",
           })
