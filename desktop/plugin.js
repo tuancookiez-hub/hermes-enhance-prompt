@@ -186,48 +186,101 @@ function lastAssistant(messages) {
   return "";
 }
 
-/* ─── Simple quality score (0-100) ─────────────────────────────────────────── */
+/* ─── G-EVAL scorer (LLM-as-judge) ─────────────────────────────────────────── */
 
-const ACTION_VERBS = new Set([
-  "build", "create", "make", "fix", "write", "add", "remove", "update", "edit",
-  "design", "implement", "deploy", "test", "review", "refactor", "rewrite",
-  "ship", "merge", "open", "close", "send", "list", "check", "find", "search",
-  "read", "parse", "render", "save", "load", "install", "configure", "set",
-  "delete", "sort", "filter", "show", "explain", "describe", "compare",
-  "analyze", "analyse", "measure", "log", "track", "monitor", "schedule",
-  "generate", "compute", "calculate", "draft", "plan", "break", "split",
-  "combine", "merge", "tag", "label", "rename", "move", "copy", "export",
-  "import", "submit", "validate", "verify", "confirm", "ensure", "trace",
-]);
+const SCORER_SYSTEM = `You are an expert evaluator of prompts for an AI coding assistant.
 
-function score(text) {
-  if (!text) return 0;
-  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
-  if (lines.length === 0) return 0;
-  const numbered = lines.filter((l) => /^\d+\.\s/.test(l)).length;
-  const hasGoal = /[A-Z].{5,}/.test(lines[0]) && !/^\d/.test(lines[0]);
+Score the prompt on five criteria using a 1–5 scale (5 = excellent, 1 = poor).
+Use the full range. Be strict.
 
-  const lower = text.toLowerCase();
-  const wordCount = lower.split(/\s+/).length;
-  const firstWord = (lower.split(/\s+/)[0] || "").replace(/[^a-z]/g, "");
-  const hasVerb = ACTION_VERBS.has(firstWord);
-  const hasSpecifics = /\b(file|table|column|class|function|method|module|component|api|endpoint|test|case|user|customer|order|product|item|message|thread|task|ticket|issue|branch|commit|pr|deploy|build|run|test|sprint)\b/i.test(text);
+Criteria:
+1. Clarity (1-5) — Is the language clear, grammatical, and unambiguous?
+2. Specificity (1-5) — Is the task scope well-defined, with concrete details?
+3. Actionability (1-5) — Can an AI take concrete steps from this prompt?
+4. Structure (1-5) — Is it organised (goal line, numbered steps, sections)?
+5. Concreteness (1-5) — Does it name real nouns (file, function, table, api)?
 
-  // Baseline 40 (any non-empty prompt passes), bonuses up to 60.
-  let s = 40;
-  if (hasGoal) s += 10;
-  if (numbered >= 1) s += Math.min(20, numbered * 4);
-  if (hasVerb) s += 10;
-  if (hasSpecifics) s += 10;
-  if (wordCount >= 30 && wordCount <= 200) s += 10;
-  return Math.max(0, Math.min(100, s));
+Reply ONLY with valid JSON, no prose, no fences:
+{"clarity":N,"specificity":N,"actionability":N,"structure":N,"concreteness":N,"reason":"<one short sentence>"}
+
+N must be an integer 1..5. If the prompt is empty, return 1s.`;
+
+const SCORER_USER = (label, text) =>
+  `${label}\n\nPROMPT TO EVALUATE:\n"""\n${text.slice(0, 4000)}
+"""\n\nJSON:`;
+
+async function geValScore(ctx, label, text) {
+  if (!text || !text.trim()) {
+    return { total: 0, parts: { clarity: 0, specificity: 0, actionability: 0, structure: 0, concreteness: 0 }, reason: "empty" };
+  }
+  const created = await rpc("session.create", {
+    title: "Score prompt",
+    hidden: true,
+    messages: [{ role: "system", content: SCORER_SYSTEM }],
+  });
+  const sid = created.session_id;
+  if (!sid) throw new Error("scorer: session.create returned no session_id");
+  await rpc("prompt.submit", { session_id: sid, text: SCORER_USER(label, text) });
+
+  const start = Date.now();
+  let last = "";
+  let stable = 0;
+  while (Date.now() - start < 30_000) {
+    try {
+      const hist = await rpc("session.history", { session_id: sid });
+      const raw = stripQuotes(lastAssistant(hist.messages || hist.history || []));
+      if (raw && raw === last) {
+        stable += 1;
+        if (stable >= 2) {
+          const parsed = parseScore(raw);
+          if (parsed) return scaleTo100(parsed, raw);
+        }
+      } else if (raw) {
+        last = raw;
+        stable = 0;
+      }
+    } catch {
+      /* keep polling */
+    }
+    await new Promise((r) => setTimeout(r, 600));
+  }
+  return null;
+}
+
+function parseScore(raw) {
+  // Find a JSON object in the response; tolerate leading prose.
+  const m = raw.match(/\{[^{}]*"clarity"[^{}]*\}/i);
+  const text = m ? m[0] : raw;
+  try {
+    const j = JSON.parse(text);
+    const n = (v) => {
+      const x = Math.round(Number(v));
+      if (!Number.isFinite(x)) return 0;
+      return Math.max(0, Math.min(5, x));
+    };
+    return {
+      clarity: n(j.clarity),
+      specificity: n(j.specificity),
+      actionability: n(j.actionability),
+      structure: n(j.structure),
+      concreteness: n(j.concreteness),
+      reason: typeof j.reason === "string" ? j.reason : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function scaleTo100(parts, raw) {
+  // 5 criteria × 5 = 25. Scale to 0–100.
+  const sum = parts.clarity + parts.specificity + parts.actionability + parts.structure + parts.concreteness;
+  return { total: Math.round((sum / 25) * 100), parts, reason: parts.reason || "" };
 }
 
 function scoreClass(s) {
   if (s >= 80) return "text-emerald-500";
   if (s >= 60) return "text-amber-500";
-  if (s >= 40) return "text-muted-foreground";
-  return "text-muted-foreground/60";
+  return "text-muted-foreground/70";
 }
 
 /* ─── Rewrite session ─────────────────────────────────────────────────────── */
@@ -299,7 +352,7 @@ function EnhanceButton() {
   const [hasBackup, setHasBackup] = useState(false);
   const [error, setError] = useState("");
   const [hasText, setHasText] = useState(false);
-  const [lastScore, setLastScore] = useState(null); // { before: N, after: N } | null
+  const lastScore = useRef(null); // { before, after, parts, reason } | null
 
   const backup = useRef(null);
   const after = useRef(null);
@@ -343,7 +396,7 @@ function EnhanceButton() {
     backup.current = null;
     after.current = null;
     setHasBackup(false);
-    setLastScore(null);
+    lastScore.current = null;
     setError("");
     // Apply the restore on the next tick so React doesn't reset the
     // contentEditable state out from under us mid-render.
@@ -378,7 +431,7 @@ function EnhanceButton() {
     setEnhancing(true);
     setError("");
     backup.current = text;
-    setLastScore({ before: score(text), after: 0 });
+    lastScore.current = null;
 
     try {
       const enhanced = stripQuotes(await enhanceOnce(text, ac.signal));
@@ -413,13 +466,40 @@ function EnhanceButton() {
       }
 
       writeDraft(clipped);
+
+      // Score before and after via G-EVAL. Show progress while scoring.
+      try {
+        const beforeScore = await geValScore(host, "ORIGINAL", backup.current || text);
+        if (ac.signal.aborted) return;
+        const afterScore = await geValScore(host, "REWRITE", clipped);
+        if (ac.signal.aborted) return;
+
+        // Live-render the before/after as the scorer returns.
+        if (beforeScore) {
+          lastScore.current = { before: beforeScore, after: null };
+          forceRender();
+        }
+        if (afterScore) {
+          lastScore.current = { before: beforeScore, after: afterScore };
+          forceRender();
+        }
+        if (!beforeScore && !afterScore) {
+          host.notify({
+            kind: "info",
+            message: "Scorer timed out — enhancement is live, no score.",
+          });
+        }
+      } catch (scoreErr) {
+        // Don't fail the enhance if the scorer fails.
+        host.notify({
+          kind: "info",
+          message: "Scorer unavailable — enhancement is live, no score.",
+        });
+      }
+
       requestAnimationFrame(() => {
         const next = readDraft();
         after.current = next;
-        setLastScore({
-          before: score(backup.current || ""),
-          after: score(next),
-        });
         setHasBackup(true);
       });
     } catch (err) {
@@ -436,16 +516,23 @@ function EnhanceButton() {
     }
   }, [cancel]);
 
+  // Tiny helper to push a re-render when we update the ref-only score.
+  const [, setScoreTick] = useState(0);
+  const forceRender = useCallback(() => setScoreTick((n) => n + 1), []);
+
   const disabled = enhancing ? false : !!chatBusy || !hasText;
-  const tip = error
-    ? error
-    : enhancing
-    ? "Enhancing… click to cancel"
-    : hasBackup
-    ? `Revert to original (${lastScore && lastScore.after ? lastScore.before + " → " + lastScore.after + "/100" : "no change"})`
-    : lastScore && lastScore.after
-    ? `Enhanced (${lastScore.before} → ${lastScore.after}/100) — click again to enhance more`
-    : "Enhance prompt";
+  const ls = lastScore.current;
+  const tip = (() => {
+    if (error) return error;
+    if (enhancing) return "Enhancing… click to cancel";
+    if (hasBackup && ls && ls.after)
+      return `Revert to original\n${ls.after.parts.clarity}/5 clarity · ${ls.after.parts.specificity}/5 specificity · ${ls.after.parts.actionability}/5 actionability · ${ls.after.parts.structure}/5 structure · ${ls.after.parts.concreteness}/5 concreteness${ls.after.reason ? "\n" + ls.after.reason : ""}`;
+    if (hasBackup) return "Revert to original";
+    if (ls && ls.after)
+      return `Enhanced (${ls.before ? ls.before.total : "?"} → ${ls.after.total}/100)\n${ls.after.parts.clarity}/5 clarity · ${ls.after.parts.specificity}/5 specificity · ${ls.after.parts.actionability}/5 actionability · ${ls.after.parts.structure}/5 structure · ${ls.after.parts.concreteness}/5 concreteness${ls.after.reason ? "\n" + ls.after.reason : ""}`;
+    if (ls && ls.before) return `Scoring… ${ls.before.total}/100`;
+    return "Enhance prompt";
+  })();
 
   return jsxs("div", {
     className: "flex h-(--composer-control-size) items-center gap-1",
@@ -472,24 +559,25 @@ function EnhanceButton() {
           }),
         }),
       }),
-      lastScore != null
+      ls && ls.after
         ? jsx("span", {
             key: "score",
             className: cn(
               "inline-flex h-(--composer-control-size) shrink-0 items-center",
               "font-mono text-[10px] leading-none tabular-nums",
-              scoreClass(lastScore.after || 0)
+              scoreClass(ls.after.total)
             ),
-            title:
-              "Quality: " +
-              (lastScore.before || 0) +
-              " → " +
-              (lastScore.after || 0) +
-              "/100",
-            children:
-              String(lastScore.before || 0) +
-              "→" +
-              String(lastScore.after || 0),
+            title: tip,
+            children: String(ls.after.total),
+          })
+        : ls && ls.before
+        ? jsx("span", {
+            key: "score-pending",
+            className: cn(
+              "inline-flex h-(--composer-control-size) shrink-0 items-center",
+              "font-mono text-[10px] leading-none tabular-nums text-muted-foreground/60"
+            ),
+            children: "…",
           })
         : null,
     ],
