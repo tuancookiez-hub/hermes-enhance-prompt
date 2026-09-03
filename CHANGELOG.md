@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0] — 2026-09-03
+
+### Changed
+- **Scorer:** G-EVAL (LLM-as-judge) replaces the 40-baseline heuristic. After enhance, the same active model scores the rewrite 1–5 on Clarity, Specificity, Actionability, Structure, Concreteness (25 max → 100). Dropped.
+- Score badge shows only the after-number while a spinner (`…`) appears while the before-score is pending.
+- Hover tooltip shows the full 5-dimension breakdown.
+- `score()` removed; `ACTION_VERBS` set removed.
+
 ## [0.2.0] — 2026-09-02
 
 ### Added
