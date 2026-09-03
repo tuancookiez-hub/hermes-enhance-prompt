@@ -405,6 +405,7 @@ function EnhanceButton() {
     after.current = null;
     setHasBackup(false);
     lastScore.current = null;
+    forceRender();
     setError("");
     // Apply the restore on the next tick so React doesn't reset the
     // contentEditable state out from under us mid-render.
@@ -422,7 +423,7 @@ function EnhanceButton() {
         });
       }
     });
-  }, []);
+  }, [forceRender]);
 
   const run = useCallback(async () => {
     const text = readDraft();
