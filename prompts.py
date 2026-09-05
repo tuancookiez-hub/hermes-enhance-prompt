@@ -48,7 +48,10 @@ USER_TEMPLATE = """Rewrite this request as an agent prompt:
 ---"""
 
 _THINK = re.compile(r"<think>[\s\S]*?</think>", re.IGNORECASE)
-_CHANNEL = re.compile(r"^<\|[\w:-]+\|>[^\n]*\n?", re.MULTILINE)
+# Strip both fullwidth (U+FF5C) channel tags used by some serving backends
+# and ASCII variants. These are the only "channel" markers the model
+# might emit alongside its response.
+_CHANNEL = re.compile(r"<｜[\s\S]*?｜>")
 _FENCE_OPEN = re.compile(r"^```[a-zA-Z0-9_-]*\n?")
 _FENCE_CLOSE = re.compile(r"\n?```$")
 _QUOTES = re.compile(r"""^['"`\u201c\u201d\u2018\u2019]+|['"`\u201c\u201d\u2018\u2019]+$""")
@@ -64,7 +67,6 @@ def strip_wrappers(text: str) -> str:
         return ""
     s = _THINK.sub("", str(text))
     s = _CHANNEL.sub("", s)
-    s = s.replace("<｜", "").replace("｜>", "")
     s = _FENCE_OPEN.sub("", s)
     s = _FENCE_CLOSE.sub("", s)
     s = _QUOTES.sub("", s.strip())

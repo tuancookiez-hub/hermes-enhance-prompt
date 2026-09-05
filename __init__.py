@@ -23,7 +23,7 @@ from typing import Any, Dict
 
 from .prompts import SYSTEM, build_user_message, strip_wrappers, MAX_CHARS
 
-__version__ = "0.2.0"
+__version__ = "0.4.0"
 logger = logging.getLogger(__name__)
 
 TOOL_NAME = "enhance_prompt"
@@ -61,19 +61,16 @@ def _enhance_text(ctx, input_text: str, max_chars: int) -> str:
     if not isinstance(input_text, str) or len(input_text.strip()) < 8:
         raise ValueError("input must be a string of at least 8 characters")
 
-    # No hard cap. max_chars is a soft hint passed to max_tokens so the
-    # model has a target; the displayed output is the full model response.
-    cap = int(max_chars) if isinstance(max_chars, (int, float)) else 0
-    cap = max(0, min(cap, 128000))
+    # No hard cap on output. max_chars is a soft hint passed to
+    # max_tokens; the user sees the full model response.
+    if not isinstance(max_chars, (int, float)):
+        max_chars = 0
+    max_chars = max(0, min(int(max_chars), 128000))
 
     user_msg = build_user_message(input_text)
-    # When cap is 0, give the model a generous default budget. The model
-    # will write as much as it needs; the brief is the right size by
-    # construction.
-    if cap == 0:
-        max_tok = 16384
-    else:
-        max_tok = min(16384, max(256, cap * 2))
+    # When cap is 0 the model writes as much as it needs; otherwise the
+    # budget tracks the soft target.
+    max_tok = min(16384, max(256, max_chars * 2)) if max_chars else 16384
     raw = ctx.llm.complete(
         system=SYSTEM,
         messages=[{"role": "user", "content": user_msg}],
@@ -91,10 +88,12 @@ def _tool_handler(ctx, params, **_kwargs):
     max_chars = MAX_CHARS
     if isinstance(params, dict):
         input_text = str(params.get("input") or "")
-        try:
-            max_chars = int(params.get("max_chars") or MAX_CHARS)
-        except (TypeError, ValueError):
-            max_chars = MAX_CHARS
+        raw_chars = params.get("max_chars", MAX_CHARS)
+        if raw_chars is not None:
+            try:
+                max_chars = int(raw_chars)
+            except (TypeError, ValueError):
+                max_chars = MAX_CHARS
     elif isinstance(params, str):
         input_text = params
     if not input_text:

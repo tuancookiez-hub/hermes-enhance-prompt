@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.4.1] — 2026-09-05
+
+### Fixed
+- **Critical: Python `strip_wrappers` regex was corrupting model output.** The `_CHANNEL` pattern used ASCII `|` (U+007C) but real channel tags use fullwidth `｜` (U+FF5C). The broken regex matched partial substrings inside real content, mangling the brief. Replaced with a proper fullwidth pattern matching the JS implementation. Added regression test (`test_strip_wrappers_fullwidth_channel_tags`).
+- **Stale `__version__`** in `__init__.py` bumped from 0.2.0 to 0.4.0.
+- **Stale `MAX_LEN = 1000` constant removed** — it was unused dead code.
+- **Stale SYSTEM prompt line** "Aim for 600–2400 characters" replaced with the no-cap rule.
+- **Stale comments** in `plugin.js` referencing "2000 char cap" / "4000 char cap" / "force 2x cap" all removed — no caps exist.
+- **Duplicate `run` function removed.** It was unreachable in practice because the sparkle button calls `advance`; its only path was a one-time stage 0→1 advance that `advance` already handles.
+- **Duplicate `clipped` reference removed.** The dead `run` referenced a non-existent `clipped` variable — would have thrown at runtime if it had been called.
+- **`scaleTo100(parts, raw)` had an unused second parameter**; removed.
+
+### Changed
+- **`run` and `stageRun` consolidated into `advance`.** One function handles all three stages. `stageRun` no longer exists; the dead code path is gone.
+- **`STAGE_HINT` is now a lookup table** keyed by stage number (`{1: ..., 2: ..., 3: ...}`) instead of three `STAGE_HINT_X` constants. `STAGE_MAX_TOKENS` is the same pattern for the soft max_tokens hint. `STAGE_TOST` renamed to `STAGE_TOAST` (typo fix).
+- **Tooltip wording** updated to match the new "advance" semantics and remove stale "2000 chars" references.
+- **`onClick` for the sparkle button** simplified: `enhancing ? cancel : advance` (no more `run` branch).
+- **`clickSparkle` helper uses a Set** of aria-labels for cleaner matching.
+
+### Cleaned
+- 907 lines → ~800 lines. Pure refactor; same external behavior, just no dead code.
+- All Python tests pass (4 existing + 1 new regression test for the channel regex).
+- `ruff check .` clean.
+- `node --check plugin.js` clean.
+- Live plugin synced: `AppData\Local\hermes\desktop-plugins\enhance-prompt\plugin.js` MD5 matches repo.
+
 ## [0.4.0] — 2026-09-05
 
 ### Added

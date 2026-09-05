@@ -37,6 +37,18 @@ def test_strip_wrappers_empty():
     assert strip_wrappers("") == ""
 
 
+def test_strip_wrappers_fullwidth_channel_tags():
+    # Fullwidth channel tags used by some serving backends.
+    raw = "<｜o1｜>final output<｜/o1｜>"
+    assert strip_wrappers(raw) == "final output"
+    # Multi-line channel block.
+    raw = "<｜channel｜>line one\nline two<｜/channel｜>\nafter"
+    assert strip_wrappers(raw) == "after"
+    # Naked think block.
+    raw = "<think>\nlet me think\n</think>\nactual answer"
+    assert strip_wrappers(raw) == "actual answer"
+
+
 def test_max_chars_and_system_present():
     # MAX_CHARS = 0 means "no cap" — model decides the brief length.
     assert MAX_CHARS == 0
