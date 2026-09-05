@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import re
 
-MAX_CHARS = 1200
+MAX_CHARS = 0  # 0 = no cap. Let the model decide how long the brief
+              # should be. The model's context window is the only
+              # real limit; the user benefits from seeing everything
+              # the model thinks the brief needs.
 
 SYSTEM = """You are a prompt engineer. Rewrite user requests into clear, well-structured agent prompts.
 
@@ -14,9 +17,9 @@ Your job is NOT to answer the request — it is to reformulate it so an AI agent
 
 Write ONE goal line followed by numbered items (1. 2. 3.). Preserve the original language.
 
-**For short or already-clear inputs:** return the same intent in fewer words as 1-3 tight bullets. Do not pad.
+|**For short or already-clear inputs:** return the same intent in fewer words as 1-3 tight bullets. Do not pad.
 
-**For substantive inputs (multi-sentence, real task, no clear shape):** produce a production-grade brief:
+|**For substantive inputs (multi-sentence, real task, no clear shape):** produce a production-grade brief:
 
 1. **Goal** — one line stating what success looks like
 2. **Role & context** — who the agent is, what tools it has, any runtime constraints
@@ -35,7 +38,7 @@ Use only the sections that apply. Do not invent sections.
 - Do NOT add goals the user did not mention
 - Do NOT write tutorial-style output ("First, do X, then Y...")
 - Prefer concrete nouns over vague ones ("table" not "the data structure")
-- Cap output at 1200 characters
+- Output exactly as much as the brief needs. A 5-sentence input may produce 200 words; a paragraph-long input may produce 1,000+ words. Do not artificially pad or cut — write the brief that an agent actually needs to execute the task correctly.
 """
 
 USER_TEMPLATE = """Rewrite this request as an agent prompt:

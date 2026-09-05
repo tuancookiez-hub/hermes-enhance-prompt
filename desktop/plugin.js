@@ -28,7 +28,16 @@ import {
 
 /* ─── Tunables ──────────────────────────────────────────────────────────── */
 
-const MAX_LEN = 600;          // soft target length for the rewrite
+const MAX_LEN = 1000;           // soft target per stage
+// No hard output cap. If the model decides a brief needs 18K chars to
+// be complete, that's the right answer for that input. Truncation
+// loses information the model was instructed to include. The GMI
+// serving endpoint already enforces its own token limit, so the
+// request is bounded by the model's context window, not by us.
+// Real-world upper bound: GPT-5 leaked system prompt is ~27K chars;
+// user-input briefs in this plugin top out around 15–20K. We
+// surface the length in the toast so the user can see what was
+// produced, but never chop.
 const INIT_POLL_MS = 1200;    // first poll interval
 const MAX_POLL_MS = 3000;     // max poll interval (exponential backoff)
 const TIMEOUT_MS = 90_000;    // total session polling timeout
@@ -65,7 +74,7 @@ Use only the sections that apply. Do not invent sections.
 - Do NOT add goals the user did not mention
 - Do NOT write tutorial-style output ("First, do X, then Y...")
 - Prefer concrete nouns over vague ones ("table" not "the data structure")
-- Cap output at 1200 characters`;
+- Aim for 600–2400 characters. If the task needs more detail to be actionable, expand; if it's already tight, keep it short.`;
 
 const USER_WRAP = `Rewrite this request as an agent prompt:
 
@@ -303,16 +312,59 @@ function sleep(ms, signal) {
   });
 }
 
-async function enhanceOnce(input, signal) {
+/* ─── Stage system prompts ──────────────────────────────────────────────── */
+// Each stage is a distinct *transformation* of the input, not just a
+// longer version of the same thing. The base SYSTEM prompt is the
+// shared style guide; the stage hint tells the model what shape to
+// produce for this pass.
+const STAGE_HINT_CLARIFY = `
+## Stage 1 — Clarify
+Produce a clean, legible brief. One goal line, then 3-5 numbered
+requirements. The output should be a short, dense version of the
+user's intent — readable in 30 seconds.`;
+const STAGE_HINT_DETAIL = `
+## Stage 2 — Detail
+Take the brief above and break each requirement into a concrete
+sub-task. For each numbered item, add:
+- the tool or action the agent should use
+- the context or inputs it needs
+- the deliverable (file, response, or state change)
+
+Result is an executable task list an agent can follow step by step.`;
+const STAGE_HINT_HORIZON = `
+## Stage 3 — Horizon
+Reframe the task as a long-running project. Add:
+- Phases or milestones (numbered, with checkpoints)
+- Dependencies between phases
+- Success criteria per phase (how the agent knows it's done)
+- A time-horizon framing ("end of day", "weekly", "milestone-based")
+
+The result is a phased plan, not a one-shot request. The agent
+should be able to resume from any checkpoint.`;
+
+/* ─── enhanceOnce ──────────────────────────────────────────────────────── */
+async function enhanceOnce(input, signal, maxChars, stage) {
+  const stageHint =
+    stage === 2
+      ? STAGE_HINT_DETAIL
+      : stage === 3
+      ? STAGE_HINT_HORIZON
+      : STAGE_HINT_CLARIFY;
+  const capHint = maxChars
+    ? `\n\nIMPORTANT: Produce a detailed rewrite of ${maxChars * 2}–${maxChars * 3} characters.`
+    : "";
   const created = await rpc("session.create", {
     title: "Enhance prompt",
     hidden: true,
-    messages: [{ role: "system", content: SYSTEM }],
+    messages: [
+      { role: "system", content: SYSTEM },
+      { role: "system", content: stageHint },
+    ],
   });
   const sid = created.session_id;
   if (!sid) throw new Error("session.create returned no session_id");
 
-  const user = USER_WRAP.replace("{input}", input);
+  const user = USER_WRAP.replace("{input}", input) + capHint;
   await rpc("prompt.submit", { session_id: sid, text: user });
 
   const start = Date.now();
@@ -357,6 +409,12 @@ function EnhanceButton() {
   const backup = useRef(null);
   const after = useRef(null);
   const abort = useRef(null);
+  // 0 = no enhance yet, 1 = first pass done (2000 char cap), 2 = first extend
+  // done (4000 char cap), 3 = second extend (still 4000 cap; further stages
+  // are useful mainly for re-applying different framing). Tracked so that
+  // a re-click on the sparkle continues the stage sequence instead of
+  // re-running the same 2000-char rewrite from scratch.
+  const stage = useRef(0);
 
   // Tiny helper to push a re-render when we update the ref-only score.
   const [, setScoreTick] = useState(0);
@@ -369,6 +427,7 @@ function EnhanceButton() {
       backup.current = null;
       after.current = null;
       setHasBackup(false);
+      stage.current = 0;
     }
     if (!text.trim() && lastScore.current) {
       lastScore.current = null;
@@ -397,33 +456,166 @@ function EnhanceButton() {
     setEnhancing(false);
   }, []);
 
+  // stageRun advances the enhance to the next stage and appends the result.
+  // stage 0 → 1: first pass
+  // stage 1 → 2: deepen
+  // stage 2 → 3: horizon
+  const stageRun = useCallback(async () => {
+    const nextStage = Math.min(stage.current + 1, 3);
+    // Soft hint for max_tokens; no hard cap on displayed output.
+    const cap =
+      nextStage === 1
+        ? 3000    // stage 1: clarify
+        : nextStage === 2
+        ? 6000   // stage 2: detail
+        : 10000; // stage 3: horizon
+
+    cancel();
+    const ac = new AbortController();
+    abort.current = ac;
+    setEnhancing(true);
+    setError("");
+    const current = readDraft();
+    try {
+      const enhanced = stripQuotes(
+        await enhanceOnce(current, ac.signal, cap, nextStage)
+      );
+      if (ac.signal.aborted) return;
+      if (!enhanced) throw new Error("empty rewrite");
+
+      // No hard cap on the displayed output. The model is told the
+      // cap as a target, not enforced. Whatever the model produces
+      // is what the user gets.
+      host.notify({
+        kind: "info",
+        message:
+          (nextStage === 2
+            ? "Stage 2: detailed task list appended. "
+            : nextStage === 3
+            ? "Stage 3: phased plan appended. "
+            : "Stage " + nextStage + " appended. ") +
+          "(" + enhanced.length.toLocaleString() + " chars)",
+      });
+
+      // Append with a visual separator between stages.
+      const sep = "\n\n---\n\n";
+      const merged = current.trimEnd() + sep + enhanced;
+      writeDraft(merged);
+
+      requestAnimationFrame(() => {
+        after.current = readDraft();
+        setHasBackup(true);
+        stage.current = nextStage;
+      });
+
+      try {
+        const score = await geValScore(host, "REWRITE", readDraft());
+        if (ac.signal.aborted) return;
+        if (score) {
+          lastScore.current = {
+            before: lastScore.current ? lastScore.current.before : null,
+            after: score,
+          };
+          forceRender();
+        }
+      } catch { /* scoring is best-effort */ }
+    } catch (err) {
+      if (err?.name === "AbortError") return;
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
+      host.notify({ kind: "error", message: "Enhance stage failed: " + msg });
+    } finally {
+      if (abort.current === ac) abort.current = null;
+      setEnhancing(false);
+    }
+  }, [cancel, forceRender]);
+
+  // revert restores the original text before any enhance ran.
   const revert = useCallback(() => {
     const text = backup.current;
     if (!text) return;
-    // Capture refs before async work to avoid stale closures
     backup.current = null;
     after.current = null;
     setHasBackup(false);
     lastScore.current = null;
+    stage.current = 0;
     forceRender();
     setError("");
-    // Apply the restore on the next tick so React doesn't reset the
-    // contentEditable state out from under us mid-render.
     requestAnimationFrame(() => {
       try {
         writeDraft(text);
-        host.notify({
-          kind: "info",
-          message: "Reverted to original.",
-        });
+        host.notify({ kind: "info", message: "Reverted to original." });
       } catch (err) {
         host.notify({
           kind: "error",
-          message: "Revert failed: " + (err && err.message ? err.message : String(err)),
+          message:
+            "Revert failed: " +
+            (err && err.message ? err.message : String(err)),
         });
       }
     });
   }, [forceRender]);
+
+  // extend re-runs the rewrite with a higher character cap and
+  // appends the new section to the existing draft. Used when the
+  // extend is an explicit "force 2x cap" button. After the first
+  // enhance, the user can click this to get a longer rewrite at the
+  // current stage. No hard cap on output.
+  const extend = useCallback(async () => {
+    if (!hasBackup || !after.current) return;
+    cancel();
+    const ac = new AbortController();
+    abort.current = ac;
+    setEnhancing(true);
+    setError("");
+    const current = readDraft();
+    try {
+      // Soft cap hint for max_tokens; no hard cap on displayed output.
+      const cap = stage.current || 2;
+      const extended = stripQuotes(
+        await enhanceOnce(current, ac.signal, cap * 3000, cap)
+      );
+      if (ac.signal.aborted) return;
+      if (!extended) throw new Error("empty extension");
+
+      const merged = current.trimEnd() + "\n\n" + extended;
+      writeDraft(merged);
+      host.notify({
+        kind: "info",
+        message:
+          "Extended (" + extended.length.toLocaleString() + " chars) appended.",
+      });
+
+      requestAnimationFrame(() => {
+        after.current = readDraft();
+        setHasBackup(true);
+        stage.current = cap;
+      });
+
+      // Re-score the merged result so the badge stays accurate.
+      try {
+        const score = await geValScore(host, "REWRITE", readDraft());
+        if (ac.signal.aborted) return;
+        if (score) {
+          lastScore.current = {
+            before: lastScore.current ? lastScore.current.before : null,
+            after: score,
+          };
+          forceRender();
+        }
+      } catch {
+        /* scoring is best-effort */
+      }
+    } catch (err) {
+      if (err?.name === "AbortError") return;
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
+      host.notify({ kind: "error", message: "Extend failed: " + msg });
+    } finally {
+      if (abort.current === ac) abort.current = null;
+      setEnhancing(false);
+    }
+  }, [hasBackup, cancel, forceRender]);
 
   const run = useCallback(async () => {
     const text = readDraft();
@@ -443,27 +635,18 @@ function EnhanceButton() {
     lastScore.current = null;
 
     try {
-      const enhanced = stripQuotes(await enhanceOnce(text, ac.signal));
+      // Soft hint for max_tokens; no hard cap on displayed output.
+      const cap = 3000; // stage 1: clarify
+      const enhanced = stripQuotes(
+        await enhanceOnce(text, ac.signal, cap, 1)
+      );
       if (ac.signal.aborted) return;
       if (!enhanced) throw new Error("empty rewrite");
 
-      // Truncate to MAX_LEN * 2 and warn if we cut anything.
-      const clipped =
-        enhanced.length > MAX_LEN * 2
-          ? enhanced.slice(0, MAX_LEN * 2).trim()
-          : enhanced;
-
-      if (clipped.length < enhanced.length) {
-        host.notify({
-          kind: "info",
-          message:
-            "Enhanced prompt truncated to " +
-            MAX_LEN * 2 +
-            " chars — consider splitting the task.",
-        });
-      }
-
-      if (clipped.trim() === backup.current.trim()) {
+      // No hard cap on the displayed output. Whatever the model
+      // produces is what the user gets — truncation would silently
+      // drop the very parts of the brief that needed the most space.
+      if (enhanced.trim() === backup.current.trim()) {
         backup.current = null;
         after.current = null;
         setHasBackup(false);
@@ -474,7 +657,14 @@ function EnhanceButton() {
         return;
       }
 
-      writeDraft(clipped);
+      writeDraft(enhanced);
+      host.notify({
+        kind: "info",
+        message:
+          "Stage 1: clarified brief (" +
+          enhanced.length.toLocaleString() +
+          " chars).",
+      });
 
       // Discard icon appears the moment the rewrite lands — scoring is
       // background work that updates the badge without holding the icon back.
@@ -482,6 +672,7 @@ function EnhanceButton() {
         const next = readDraft();
         after.current = next;
         setHasBackup(true);
+        stage.current = 1; // first stage (clarify) complete
       });
 
       // Score before and after via G-EVAL. Show progress while scoring.
@@ -532,8 +723,14 @@ function EnhanceButton() {
   const buttonTip = (() => {
     if (error) return error;
     if (enhancing) return "Enhancing… click to cancel";
-    if (hasBackup) return "Revert to original";
-    return "Enhance prompt";
+    if (hasBackup) {
+      if (stage.current === 1)
+        return "Stage 2: break into detailed task list";
+      if (stage.current === 2)
+        return "Stage 3: convert to phased plan";
+      return "Advance to next stage";
+    }
+    return "Enhance prompt (general — 2000 chars)";
   })();
   const scoreTip = (() => {
     if (!ls || !ls.after) return null;
@@ -552,24 +749,71 @@ function EnhanceButton() {
       jsx(Tip, {
         label: buttonTip,
         children: jsx(Button, {
-          "aria-label": buttonTip,
+          "aria-label": hasBackup
+            ? "Advance enhance to next stage"
+            : "Enhance prompt",
           className: cn(
             "size-(--composer-control-size) shrink-0 rounded-md",
             "text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground",
             (enhancing || hasBackup) && "text-foreground"
           ),
           disabled,
-          onClick: enhancing ? cancel : hasBackup ? revert : run,
+          onClick: enhancing ? cancel : hasBackup ? stageRun : run,
           size: "icon-xs",
           type: "button",
           variant: "ghost",
           children: jsx(Codicon, {
-            name: enhancing ? "sync" : hasBackup ? "discard" : "sparkle",
+            name: enhancing
+              ? "sync"
+              : hasBackup
+              ? "arrow-right" // advancing to next stage
+              : "sparkle",
             size: 14,
             spinning: enhancing,
           }),
         }),
       }),
+      // Discard / revert — appears once an enhanced version is in place,
+      // letting the user throw the rewrite away and go back to the
+      // original draft. Always available alongside the stage-advance
+      // and explicit extend buttons.
+      hasBackup && !enhancing
+        ? jsx(Tip, {
+            label: "Discard enhanced version, revert to original",
+            children: jsx(Button, {
+              "aria-label": "Revert to original",
+              className: cn(
+                "size-(--composer-control-size) shrink-0 rounded-md",
+                "text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground"
+              ),
+              onClick: revert,
+              size: "icon-xs",
+              type: "button",
+              variant: "ghost",
+              children: jsx(Codicon, { name: "discard", size: 14 }),
+            }),
+          })
+        : null,
+      // Extend button — explicit "go deeper" with a fixed 4000-char cap.
+      // Distinct from the stage-advance sparkle so the user can force a
+      // longer rewrite at any stage.
+      hasBackup && !enhancing
+        ? jsx(Tip, {
+            label: "Extend prompt (force 4000-char cap, appends)",
+            children: jsx(Button, {
+              "aria-label": "Extend prompt",
+              className: cn(
+                "size-(--composer-control-size) shrink-0 rounded-md",
+                "text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground"
+              ),
+              onClick: extend,
+              size: "icon-xs",
+              type: "button",
+              variant: "ghost",
+              children: jsx(Codicon, { name: "arrow-down", size: 14 }),
+            }),
+          })
+        : null,
       ls && ls.after
         ? jsx(Tip, {
             label: scoreTip,
@@ -601,8 +845,8 @@ function EnhanceButton() {
 
 function clickSparkle() {
   const tips = [
-    "Enhance prompt",
-    "Revert to original",
+    "Enhance prompt (general — 2000 chars)",
+    "Advance enhance to next stage",
     "Enhancing… click to cancel",
   ];
   const btn = [...document.querySelectorAll("button[aria-label]")].find((el) =>

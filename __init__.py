@@ -46,10 +46,10 @@ SCHEMA: Dict[str, Any] = {
             },
             "max_chars": {
                 "type": "integer",
-                "description": "Soft cap on the enhanced prompt length.",
-                "minimum": 80,
-                "maximum": 4000,
-                "default": MAX_CHARS,
+                "description": "Soft hint for max_tokens. Use 0 for no cap (recommended).",
+                "minimum": 0,
+                "maximum": 128000,
+                "default": 0,
             },
         },
         "required": ["input"],
@@ -61,21 +61,28 @@ def _enhance_text(ctx, input_text: str, max_chars: int) -> str:
     if not isinstance(input_text, str) or len(input_text.strip()) < 8:
         raise ValueError("input must be a string of at least 8 characters")
 
-    cap = int(max_chars) if isinstance(max_chars, (int, float)) else MAX_CHARS
-    cap = max(80, min(cap, 4000))
+    # No hard cap. max_chars is a soft hint passed to max_tokens so the
+    # model has a target; the displayed output is the full model response.
+    cap = int(max_chars) if isinstance(max_chars, (int, float)) else 0
+    cap = max(0, min(cap, 128000))
 
     user_msg = build_user_message(input_text)
+    # When cap is 0, give the model a generous default budget. The model
+    # will write as much as it needs; the brief is the right size by
+    # construction.
+    if cap == 0:
+        max_tok = 16384
+    else:
+        max_tok = min(16384, max(256, cap * 2))
     raw = ctx.llm.complete(
         system=SYSTEM,
         messages=[{"role": "user", "content": user_msg}],
         temperature=0.2,
-        max_tokens=min(2048, max(256, cap * 2)),
+        max_tokens=max_tok,
     )
     text = strip_wrappers(raw or "").strip()
     if not text:
         raise RuntimeError("enhance_prompt: empty response from model")
-    if len(text) > cap:
-        text = text[:cap].rstrip()
     return text
 
 

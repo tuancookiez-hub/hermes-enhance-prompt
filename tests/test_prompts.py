@@ -38,9 +38,12 @@ def test_strip_wrappers_empty():
 
 
 def test_max_chars_and_system_present():
-    assert MAX_CHARS == 1200
+    # MAX_CHARS = 0 means "no cap" — model decides the brief length.
+    assert MAX_CHARS == 0
     assert "Do NOT answer the request" in SYSTEM
     assert "numbered" in SYSTEM.lower()
+    # The no-cap rule should be in the system prompt.
+    assert "exactly as much" in SYSTEM or "as much as the brief needs" in SYSTEM
 
 
 if __name__ == "__main__":
