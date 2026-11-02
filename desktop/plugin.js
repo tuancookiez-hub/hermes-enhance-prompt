@@ -140,6 +140,8 @@ async function rpc(method, params) {
 /* ─── Composer DOM helpers ──────────────────────────────────────────────── */
 
 const AUTO = "auto";
+const MODEL_CACHE_MS = 15_000;
+let modelCache = { at: 0, value: AUTO };
 
 function sid() {
   const atom = host.state && host.state.focusedSessionId;
@@ -171,15 +173,27 @@ async function writeDraft(text) {
 }
 
 async function savedModel() {
+  if (Date.now() - modelCache.at < MODEL_CACHE_MS) return modelCache.value;
   try {
     const listed = await rpc("plugins.manage", { action: "list" });
     const rows = listed.plugins || [];
     const row = rows.find((r) => r && (r.key === "enhance-prompt" || r.name === "enhance-prompt"));
     const fields = (row && row.settings_schema) || [];
     const field = fields.find((f) => f && f.key === "model");
-    return field && field.value != null ? String(field.value).trim() : AUTO;
+    const value = field && field.value != null ? String(field.value).trim() : AUTO;
+    modelCache = { at: Date.now(), value };
+    return value;
   } catch {
-    return AUTO;
+    return modelCache.value || AUTO;
+  }
+}
+
+async function closeQuiet(sessionId) {
+  if (!sessionId) return;
+  try {
+    await rpc("session.close", { session_id: sessionId });
+  } catch {
+    /* a hidden session that outlives the read is harmless */
   }
 }
 
@@ -272,26 +286,30 @@ async function geValScore(label, text, pin) {
   const start = Date.now();
   let last = "";
   let stable = 0;
-  while (Date.now() - start < TIMEOUT_SCORER_MS) {
-    try {
-      const hist = await rpc("session.history", { session_id: sid });
-      const raw = stripQuotes(lastAssistant(hist.messages || hist.history || []));
-      if (raw && raw === last) {
-        stable += 1;
-        if (stable >= 2) {
-          const parsed = parseScore(raw);
-          if (parsed) return scaleTo100(parsed);
+  try {
+    while (Date.now() - start < TIMEOUT_SCORER_MS) {
+      try {
+        const hist = await rpc("session.history", { session_id: sid });
+        const raw = stripQuotes(lastAssistant(hist.messages || hist.history || []));
+        if (raw && raw === last) {
+          stable += 1;
+          if (stable >= 2) {
+            const parsed = parseScore(raw);
+            if (parsed) return scaleTo100(parsed);
+          }
+        } else if (raw) {
+          last = raw;
+          stable = 0;
         }
-      } else if (raw) {
-        last = raw;
-        stable = 0;
+      } catch {
+        /* keep polling */
       }
-    } catch {
-      /* keep polling */
+      await new Promise((r) => setTimeout(r, POLL_SCORER_MS));
     }
-    await new Promise((r) => setTimeout(r, POLL_SCORER_MS));
+    return null;
+  } finally {
+    await closeQuiet(sid);
   }
-  return null;
 }
 
 function parseScore(raw) {
@@ -328,6 +346,19 @@ function scoreClass(s) {
   if (s >= 80) return "text-emerald-500";
   if (s >= 60) return "text-amber-500";
   return "text-muted-foreground/70";
+}
+
+function scoreTitle(ls) {
+  const a = ls.after.parts;
+  return [
+    ls.after.total + "/100",
+    a.clarity + "/5 clarity · " + a.specificity + "/5 specificity · " +
+      a.actionability + "/5 actionability · " + a.structure + "/5 structure · " +
+      a.concreteness + "/5 concreteness",
+    ls.after.reason || "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 /* ─── Rewrite session ──────────────────────────────────────────────────── */
@@ -378,34 +409,39 @@ async function enhanceOnce(input, signal, stage, pin) {
   let stable = 0;
   let pollMs = INIT_POLL_MS;
 
-  while (Date.now() - start < TIMEOUT_MS) {
-    if (signal?.aborted) throw new DOMException("aborted", "AbortError");
-    try {
-      const hist = await rpc("session.history", { session_id: sid });
-      const next = stripQuotes(
-        lastAssistant(hist.messages || hist.history || [])
-      );
-      if (next && next === last) {
-        stable += 1;
-        if (stable >= 2) return next;
-      } else if (next) {
-        last = next;
-        stable = 0;
+  try {
+    while (Date.now() - start < TIMEOUT_MS) {
+      if (signal?.aborted) throw new DOMException("aborted", "AbortError");
+      try {
+        const hist = await rpc("session.history", { session_id: sid });
+        const next = stripQuotes(
+          lastAssistant(hist.messages || hist.history || [])
+        );
+        if (next && next === last) {
+          stable += 1;
+          if (stable >= 2) return next;
+        } else if (next) {
+          last = next;
+          stable = 0;
+        }
+      } catch {
+        /* keep polling */
       }
-    } catch {
-      /* keep polling */
+      await sleep(pollMs, signal);
+      pollMs = Math.min(pollMs * 1.5, MAX_POLL_MS);
     }
-    await sleep(pollMs, signal);
-    pollMs = Math.min(pollMs * 1.5, MAX_POLL_MS);
+    if (last) return last;
+    throw new Error("timed out waiting for enhanced prompt");
+  } finally {
+    await closeQuiet(sid);
   }
-  if (last) return last;
-  throw new Error("timed out waiting for enhanced prompt");
 }
 
 /* ─── EnhancementButton ─────────────────────────────────────────────────── */
 
 function EnhanceButton() {
   const chatBusy = useValue(host.state.busy);
+  const curSid = useValue(host.state.focusedSessionId);
   const [enhancing, setEnhancing] = useState(false);
   const [hasBackup, setHasBackup] = useState(false);
   const [error, setError] = useState("");
@@ -455,6 +491,18 @@ function EnhanceButton() {
     abort.current = null;
     setEnhancing(false);
   }, []);
+
+  // The backup and the stage belong to one draft. Switching chats must
+  // not let a later revert write the previous chat's text into this one.
+  useEffect(() => {
+    backup.current = null;
+    after.current = null;
+    lastScore.current = null;
+    stage.current = 0;
+    setHasBackup(false);
+    setError("");
+    cancel();
+  }, [curSid, cancel]);
 
   // advance runs the next stage. From a fresh state (stage 0) this
   // is Stage 1 (clarify). After Stage 1 it runs Stage 2 (detail).
@@ -631,16 +679,6 @@ function EnhanceButton() {
     }
     return "Enhance prompt (clarify — Stage 1). Model: " + modelLabel + ". Change in Settings → Plugins.";
   })();
-  const scoreTip = (() => {
-    if (!ls || !ls.after) return null;
-    const a = ls.after.parts;
-    const lines = [
-      `${ls.before ? ls.before.total : "?"} → ${ls.after.total}/100`,
-      `${a.clarity}/5 clarity · ${a.specificity}/5 specificity · ${a.actionability}/5 actionability · ${a.structure}/5 structure · ${a.concreteness}/5 concreteness`,
-    ];
-    if (ls.after.reason) lines.push(ls.after.reason);
-    return lines.join("\n");
-  })();
 
   return jsxs("div", {
     className: "flex h-(--composer-control-size) items-center gap-1",
@@ -663,14 +701,25 @@ function EnhanceButton() {
           size: "icon-xs",
           type: "button",
           variant: "ghost",
-          children: jsx(Codicon, {
-            name: enhancing
-              ? "sync"
-              : hasBackup
-              ? "arrow-right"
-              : "sparkle",
-            size: 14,
-            spinning: enhancing,
+          children: jsxs("span", {
+            className: "inline-flex items-center gap-1",
+            title: ls && ls.after ? scoreTitle(ls) : undefined,
+            children: [
+              jsx(Codicon, {
+                name: enhancing ? "sync" : hasBackup ? "arrow-right" : "sparkle",
+                size: 14,
+                spinning: enhancing,
+              }),
+              ls && ls.after
+                ? jsx("span", {
+                    className: cn(
+                      "font-mono text-[10px] tabular-nums",
+                      scoreClass(ls.after.total)
+                    ),
+                    children: String(ls.after.total),
+                  })
+                : null,
+            ],
           }),
         }),
       }),
@@ -712,29 +761,6 @@ function EnhanceButton() {
             }),
           })
         : null,
-      ls && ls.after
-        ? jsx(Tip, {
-            label: scoreTip,
-            children: jsx("span", {
-              key: "score",
-              className: cn(
-                "inline-flex h-(--composer-control-size) shrink-0 cursor-help items-center",
-                "font-mono text-[10px] leading-none tabular-nums",
-                scoreClass(ls.after.total)
-              ),
-              children: String(ls.after.total),
-            }),
-          })
-        : ls && ls.before && !ls.after
-        ? jsx("span", {
-            key: "score-pending",
-            className: cn(
-              "inline-flex h-(--composer-control-size) shrink-0 items-center",
-              "font-mono text-[10px] leading-none tabular-nums text-muted-foreground/60 animate-pulse"
-            ),
-            children: "…",
-          })
-        : null,
     ],
   });
 }
@@ -760,7 +786,7 @@ export default {
   id: "enhance-prompt",
   name: "Enhance Prompt",
   description:
-    "Sparkle beside Send that rewrites the composer draft without sending it. Click again to deepen into a task list, again to reframe as a phased plan. Shows a small quality score next to the sparkle after each rewrite.",
+    "Sparkle beside Send that rewrites the composer draft without sending it. Click again to deepen the brief. Model follows the chat unless you set one in Settings → Plugins.",
   defaultEnabled: true,
 
   register(ctx) {

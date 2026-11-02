@@ -1,5 +1,5 @@
 name: enhance-prompt
-version: "0.5.0"
+version: "0.6.0"
 description: "Sparkle beside Send that rewrites the composer draft without sending it. Click again to deepen the brief. Also registers /enhance and the enhance_prompt tool."
 author: tuancookiez-hub
 homepage: https://github.com/tuancookiez-hub/hermes-enhance-prompt

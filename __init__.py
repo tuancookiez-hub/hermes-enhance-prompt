@@ -23,7 +23,7 @@ from typing import Any, Dict
 
 from .prompts import SYSTEM, build_user_message, picked_model, strip_wrappers, MAX_CHARS
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 logger = logging.getLogger(__name__)
 
 TOOL_NAME = "enhance_prompt"

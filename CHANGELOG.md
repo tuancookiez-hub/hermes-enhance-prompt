@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.0] — 2026-11-03
+
+### Fixed
+- Score sits inside the sparkle button again, so the tight composer row cannot clip it. The breakdown moved to the hover title.
+- Stage and backup state reset when you switch chats. A revert can no longer write the previous chat's draft into the new one.
+- Hidden rewrite and scoring sessions are closed after each read instead of staying live on the gateway.
+- The model setting is cached for 15s instead of re-listing the whole plugin hub on every click.
+
+### Changed
+- Plugin description matches current behaviour.
+
 ## [0.5.0] — 2026-11-03
 
 ### Changed
