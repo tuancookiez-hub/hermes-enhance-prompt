@@ -19,3 +19,8 @@ A sparkle beside Send rewrites the composer draft into a structured brief withou
 ## Validation
 
 - [ ] `hermes plugins validate . --install-deps` passes at the pinned SHA
+
+
+## PR
+
+https://github.com/NousResearch/hermes-agent/pull/148095
