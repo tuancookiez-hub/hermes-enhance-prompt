@@ -32,11 +32,7 @@ import {
 const INIT_POLL_MS = 1200;     // first poll interval
 const MAX_POLL_MS = 3000;      // max poll interval (exponential backoff)
 const TIMEOUT_MS = 90_000;     // total session polling timeout
-const MIN_LEN = 8;             // minimum draft length to activate
-
-// Stage 1=clarify, 2=detail, 3=horizon. Used as soft hints for
-// max_tokens; the displayed output is never truncated.
-const STAGE_MAX_TOKENS = { 1: 3000, 2: 6000, 3: 10000 };
+const MIN_LEN = 8;
 
 /* ─── Rewrite prompt (inline — must stay in sync with prompts.py) ───────── */
 
@@ -48,9 +44,9 @@ Your job is NOT to answer the request — it is to reformulate it so an AI agent
 
 Write ONE goal line followed by numbered items (1. 2. 3.). Preserve the original language.
 
-|**For short or already-clear inputs:** return the same intent in fewer words as 1-3 tight bullets. Do not pad.
+**For short or already-clear inputs:** return the same intent in fewer words as 1-3 tight bullets. Do not pad.
 
-|**For substantive inputs (multi-sentence, real task, no clear shape):** produce a production-grade brief:
+**For substantive inputs (multi-sentence, real task, no clear shape):** produce a production-grade brief:
 
 1. **Goal** — one line stating what success looks like
 2. **Role & context** — who the agent is, what tools it has, any runtime constraints
@@ -143,50 +139,57 @@ async function rpc(method, params) {
 
 /* ─── Composer DOM helpers ──────────────────────────────────────────────── */
 
-const COMPOSER_SLOT = "composer-rich-input";
+const AUTO = "auto";
 
-function composerEl() {
-  const nodes = document.querySelectorAll(`[data-slot="${COMPOSER_SLOT}"]`);
-  for (const n of nodes) {
-    if (!(n instanceof HTMLElement)) continue;
-    if (n.offsetParent !== null || n.getClientRects().length) return n;
+function sid() {
+  const atom = host.state && host.state.focusedSessionId;
+  if (atom && typeof atom.get === "function") return atom.get() || null;
+  return null;
+}
+
+function chatModel() {
+  const atom = host.state && host.state.model;
+  if (!atom || typeof atom.get !== "function") return "";
+  return String(atom.get() || "").trim();
+}
+
+function composerApi() {
+  if (!host.composer || typeof host.composer.getDraft !== "function") {
+    throw new Error("Update Hermes Desktop — enhance-prompt needs the composer draft API");
   }
-  return nodes[0] instanceof HTMLElement ? nodes[0] : null;
+  return host.composer;
 }
 
-function readDraft() {
-  const el = composerEl();
-  if (!el) return "";
-  return String(el.innerText || el.textContent || "")
-    .replace(/\u00a0/g, " ")
-    .trim();
+async function readDraft() {
+  const text = await composerApi().getDraft(sid());
+  return String(text || "").replace(/\u00a0/g, " ").trim();
 }
 
-function writeDraft(text) {
-  const el = composerEl();
-  if (!el) throw new Error("composer not found");
-  const next = String(text ?? "");
+async function writeDraft(text) {
+  const ok = await composerApi().setDraft(sid(), String(text ?? ""));
+  if (ok === false) throw new Error("composer rejected the rewrite");
+}
 
-  el.focus();
+async function savedModel() {
   try {
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(range);
-    const ok = document.execCommand("insertText", false, next);
-    if (!ok) throw new Error("insertText failed");
+    const listed = await rpc("plugins.manage", { action: "list" });
+    const rows = listed.plugins || [];
+    const row = rows.find((r) => r && (r.key === "enhance-prompt" || r.name === "enhance-prompt"));
+    const fields = (row && row.settings_schema) || [];
+    const field = fields.find((f) => f && f.key === "model");
+    return field && field.value != null ? String(field.value).trim() : AUTO;
   } catch {
-    el.textContent = next;
-    el.dispatchEvent(
-      new InputEvent("input", {
-        bubbles: true,
-        inputType: "insertReplacementText",
-        data: next,
-      })
-    );
+    return AUTO;
   }
-  el.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+async function modelPin() {
+  const saved = (await savedModel()) || AUTO;
+  if (!saved || saved.toLowerCase() === AUTO) {
+    const chat = chatModel();
+    return { model: chat || "", label: chat ? "chat model (" + chat + ")" : "chat model" };
+  }
+  return { model: saved, label: saved };
 }
 
 /* ─── Output cleaning ───────────────────────────────────────────────────── */
@@ -252,7 +255,7 @@ const SCORER_USER = (label, text) =>
 const TIMEOUT_SCORER_MS = 30_000;
 const POLL_SCORER_MS = 600;
 
-async function geValScore(ctx, label, text) {
+async function geValScore(label, text, pin) {
   if (!text || !text.trim()) {
     return { total: 0, parts: { clarity: 0, specificity: 0, actionability: 0, structure: 0, concreteness: 0 }, reason: "empty" };
   }
@@ -260,6 +263,7 @@ async function geValScore(ctx, label, text) {
     title: "Score prompt",
     hidden: true,
     messages: [{ role: "system", content: SCORER_SYSTEM }],
+    ...(pin && pin.model ? { model: pin.model } : {}),
   });
   const sid = created.session_id;
   if (!sid) throw new Error("scorer: session.create returned no session_id");
@@ -352,10 +356,8 @@ const STAGE_TOAST = {
   3: "Stage 3: phased plan appended.",
 };
 
-async function enhanceOnce(input, signal, stage) {
-  const maxChars = STAGE_MAX_TOKENS[stage] || STAGE_MAX_TOKENS[1];
+async function enhanceOnce(input, signal, stage, pin) {
   const stageHint = STAGE_HINT[stage] || STAGE_HINT_CLARIFY;
-  const capHint = `\n\nIMPORTANT: Produce a detailed rewrite of ${maxChars * 2}–${maxChars * 3} characters.`;
   const created = await rpc("session.create", {
     title: "Enhance prompt",
     hidden: true,
@@ -363,11 +365,12 @@ async function enhanceOnce(input, signal, stage) {
       { role: "system", content: SYSTEM },
       { role: "system", content: stageHint },
     ],
+    ...(pin && pin.model ? { model: pin.model } : {}),
   });
   const sid = created.session_id;
   if (!sid) throw new Error("session.create returned no session_id");
 
-  const user = USER_WRAP.replace("{input}", input) + capHint;
+  const user = USER_WRAP.replace("{input}", input);
   await rpc("prompt.submit", { session_id: sid, text: user });
 
   const start = Date.now();
@@ -407,7 +410,8 @@ function EnhanceButton() {
   const [hasBackup, setHasBackup] = useState(false);
   const [error, setError] = useState("");
   const [hasText, setHasText] = useState(false);
-  const lastScore = useRef(null); // { before, after, parts, reason } | null
+  const [modelLabel, setModelLabel] = useState("chat model");
+  const lastScore = useRef(null);
 
   const backup = useRef(null);
   const after = useRef(null);
@@ -420,8 +424,13 @@ function EnhanceButton() {
   const [, setScoreTick] = useState(0);
   const forceRender = useCallback(() => setScoreTick((n) => n + 1), []);
 
-  const refreshHasText = useCallback(() => {
-    const text = readDraft();
+  const refreshHasText = useCallback(async () => {
+    let text = "";
+    try {
+      text = await readDraft();
+    } catch {
+      text = "";
+    }
     setHasText(text.length >= MIN_LEN);
     if (hasBackup && after.current && text !== after.current) {
       backup.current = null;
@@ -437,17 +446,8 @@ function EnhanceButton() {
 
   useEffect(() => {
     refreshHasText();
-    const el = composerEl();
-    if (!el) return undefined;
-    const on = () => refreshHasText();
-    el.addEventListener("input", on);
-    el.addEventListener("keyup", on);
-    const t = setInterval(on, 800);
-    return () => {
-      el.removeEventListener("input", on);
-      el.removeEventListener("keyup", on);
-      clearInterval(t);
-    };
+    const t = setInterval(refreshHasText, 800);
+    return () => clearInterval(t);
   }, [refreshHasText]);
 
   const cancel = useCallback(() => {
@@ -461,7 +461,7 @@ function EnhanceButton() {
   // After Stage 2 it runs Stage 3 (horizon). After Stage 3+ it
   // re-runs Stage 3 with a deeper framing.
   const advance = useCallback(async () => {
-    const text = readDraft();
+    const text = await readDraft();
     if (text.length < MIN_LEN) {
       host.notify({
         kind: "error",
@@ -470,9 +470,10 @@ function EnhanceButton() {
       return;
     }
     const nextStage = Math.min(stage.current + 1, 3);
-    // First advance remembers the original text so the user can revert.
     if (stage.current === 0) backup.current = text;
     lastScore.current = null;
+    const pin = await modelPin();
+    setModelLabel(pin.label);
 
     cancel();
     const ac = new AbortController();
@@ -482,7 +483,7 @@ function EnhanceButton() {
 
     try {
       const enhanced = stripQuotes(
-        await enhanceOnce(text, ac.signal, nextStage)
+        await enhanceOnce(text, ac.signal, nextStage, pin)
       );
       if (ac.signal.aborted) return;
       if (!enhanced) throw new Error("empty rewrite");
@@ -493,24 +494,21 @@ function EnhanceButton() {
         nextStage === 1
           ? enhanced
           : text.trimEnd() + "\n\n---\n\n" + enhanced;
-      writeDraft(merged);
+      await writeDraft(merged);
 
       host.notify({
         kind: "info",
         message:
           (STAGE_TOAST[nextStage] || `Stage ${nextStage} appended.`) +
-          " (" + enhanced.length.toLocaleString() + " chars)",
+          " (" + enhanced.length.toLocaleString() + " chars, " + pin.label + ")",
       });
 
-      requestAnimationFrame(() => {
-        after.current = readDraft();
-        setHasBackup(true);
-        stage.current = nextStage;
-      });
+      after.current = await readDraft();
+      setHasBackup(true);
+      stage.current = nextStage;
 
-      // Re-score the rewrite. Best-effort; silently no-op on failure.
       try {
-        const score = await geValScore(host, "REWRITE", readDraft());
+        const score = await geValScore("REWRITE", after.current, pin);
         if (ac.signal.aborted) return;
         if (score) {
           lastScore.current = {
@@ -537,7 +535,9 @@ function EnhanceButton() {
   const extend = useCallback(async () => {
     if (!hasBackup || !after.current) return;
     const currentStage = stage.current || 1;
-    const text = readDraft();
+    const text = await readDraft();
+    const pin = await modelPin();
+    setModelLabel(pin.label);
     cancel();
     const ac = new AbortController();
     abort.current = ac;
@@ -545,27 +545,24 @@ function EnhanceButton() {
     setError("");
     try {
       const extended = stripQuotes(
-        await enhanceOnce(text, ac.signal, currentStage)
+        await enhanceOnce(text, ac.signal, currentStage, pin)
       );
       if (ac.signal.aborted) return;
       if (!extended) throw new Error("empty extension");
 
       const merged = text.trimEnd() + "\n\n" + extended;
-      writeDraft(merged);
+      await writeDraft(merged);
       host.notify({
         kind: "info",
         message:
           "Extended (" + extended.length.toLocaleString() + " chars) appended.",
       });
 
-      requestAnimationFrame(() => {
-        after.current = readDraft();
-        setHasBackup(true);
-      });
+      after.current = await readDraft();
+      setHasBackup(true);
 
-      // Re-score the merged result so the badge stays accurate.
       try {
-        const score = await geValScore(host, "REWRITE", readDraft());
+        const score = await geValScore("REWRITE", after.current, pin);
         if (ac.signal.aborted) return;
         if (score) {
           lastScore.current = {
@@ -587,7 +584,7 @@ function EnhanceButton() {
   }, [hasBackup, cancel, forceRender]);
 
   // revert restores the original text before any enhance ran.
-  const revert = useCallback(() => {
+  const revert = useCallback(async () => {
     const text = backup.current;
     if (!text) return;
     backup.current = null;
@@ -597,20 +594,28 @@ function EnhanceButton() {
     stage.current = 0;
     forceRender();
     setError("");
-    requestAnimationFrame(() => {
-      try {
-        writeDraft(text);
-        host.notify({ kind: "info", message: "Reverted to original." });
-      } catch (err) {
-        host.notify({
-          kind: "error",
-          message:
-            "Revert failed: " +
-            (err && err.message ? err.message : String(err)),
-        });
-      }
-    });
+    try {
+      await writeDraft(text);
+      host.notify({ kind: "info", message: "Reverted to original." });
+    } catch (err) {
+      host.notify({
+        kind: "error",
+        message:
+          "Revert failed: " +
+          (err && err.message ? err.message : String(err)),
+      });
+    }
   }, [forceRender]);
+
+  useEffect(() => {
+    trigger = () => {
+      if (enhancing) cancel();
+      else advance();
+    };
+    return () => {
+      trigger = null;
+    };
+  }, [enhancing, cancel, advance]);
 
   const disabled = enhancing ? false : !!chatBusy || !hasText;
   const ls = lastScore.current;
@@ -624,7 +629,7 @@ function EnhanceButton() {
         return "Stage 3: convert to phased plan";
       return "Stage 3: deepen the phased plan";
     }
-    return "Enhance prompt (clarify — Stage 1)";
+    return "Enhance prompt (clarify — Stage 1). Model: " + modelLabel + ". Change in Settings → Plugins.";
   })();
   const scoreTip = (() => {
     if (!ls || !ls.after) return null;
@@ -736,24 +741,17 @@ function EnhanceButton() {
 
 /* ─── Palette + keybind helpers ─────────────────────────────────────────── */
 
-const CLICK_SPARKLE_TIPS = new Set([
-  "Enhance prompt",
-  "Cancel enhance",
-  "Advance enhance to next stage",
-]);
+let trigger = null;
 
 function clickSparkle() {
-  const btn = [...document.querySelectorAll("button[aria-label]")].find(
-    (el) => CLICK_SPARKLE_TIPS.has(el.getAttribute("aria-label") || "")
-  );
-  if (btn instanceof HTMLElement) {
-    btn.click();
-  } else {
-    host.notify({
-      kind: "info",
-      message: "Type in the composer, then use the sparkle next to Send.",
-    });
+  if (typeof trigger === "function") {
+    trigger();
+    return;
   }
+  host.notify({
+    kind: "info",
+    message: "Type in the composer, then use the sparkle next to Send.",
+  });
 }
 
 /* ─── Plugin entry point ───────────────────────────────────────────────── */

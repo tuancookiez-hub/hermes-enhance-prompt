@@ -38,86 +38,29 @@ Higher-quality MP4: [assets/demo-enhance-prompt.mp4](assets/demo-enhance-prompt.
 
 ---
 
-## Desktop: the sparkle
-
-### Install (paste into Hermes to have another agent do it)
-
-```
-Install the enhance-prompt plugin from tuancookiez-hub/hermes-enhance-prompt.
-
-1. Clone or pull:
-   git clone https://github.com/tuancookiez-hub/hermes-enhance-prompt.git
-   cd hermes-enhance-prompt
-2. Copy desktop/plugin.js to:
-   <HERMES_HOME>/desktop-plugins/enhance-prompt/plugin.js
-   Folder name MUST be enhance-prompt.
-3. In Hermes Desktop: Ctrl/Cmd+K → Reload desktop plugins
-   (or Settings → Plugins → Enhance Prompt on)
-4. Type in the composer and click the sparkle next to Send.
-```
-
-`HERMES_HOME` is normally `%LOCALAPPDATA%\hermes` on Windows, `~/.hermes` on macOS/Linux.
-
-> **Two plugin systems.** `hermes plugins install` installs the *Python agent* half (`/enhance` + `enhance_prompt` tool). The sparkle is a *Desktop UI* plugin — copy `desktop/plugin.js` as above. Both can live in this one repo.
-
-Manual copy:
-
-```
-# default profile
-<HERMES_HOME>/desktop-plugins/enhance-prompt/plugin.js
-
-# named profile
-<HERMES_HOME>/profiles/<name>/desktop-plugins/enhance-prompt/plugin.js
-```
-
-The Desktop watches that folder. Drop the file in; no `npm run pack`.
-
-### How the sparkle works
-
-1. Reads the composer (`data-slot="composer-rich-input"`)
-2. Hidden `session.create` + rewrite system prompt (uses the **active** model)
-3. `prompt.submit` the draft
-4. Polls `session.history` until the assistant text settles
-5. **Selects all** then `insertText` so the draft is replaced, not appended
-6. Shows `before→after` quality score inside the sparkle button
-
-Cancel is UI-only. The hidden session may still finish.
-
----
-
-## Agent: `/enhance` + `enhance_prompt` tool
-
-Same rewrite logic from CLI, gateway, and MCP:
+## Install
 
 ```
 hermes plugins install tuancookiez-hub/hermes-enhance-prompt
+hermes plugins enable enhance-prompt
 ```
 
-Then:
+One package covers both halves. The sparkle loads from `desktop/plugin.js` inside the install. Reload desktop plugins (Ctrl/Cmd+K → Reload desktop plugins) if the button is missing.
 
-```
-/enhance fix the login flow
-```
+## Which model it uses
 
-or the tool:
+Default is **auto**: the model of the chat you are in.
 
-```
-enhance_prompt(input="fix the login", max_chars=1200)
-```
+To pin a different model:
 
----
+1. Hermes Desktop → Settings → Plugins → Enhance Prompt
+2. Set **Enhance model** to a model id (the same string the model pill shows), or back to `auto`
 
-## Limits
+The sparkle tooltip shows which one it will use. The id has to be one your current provider can serve. `/enhance` and the `enhance_prompt` tool read the same setting. A pinned model needs the install-time model-override consent; `auto` does not.
 
-- Desktop sparkle needs a live Desktop gateway and a working model
-- One model turn per click
-- No public `setComposerDraft` SDK — write path is DOM-based (select-all + insertText)
-- Drafts under 8 characters are ignored
-- Quality score is a local heuristic (goal line, numbered steps, action verb, specifics) — not an LLM judge
+## Disclosure
 
-## Installing-agent notes
-
-Full install / verify / uninstall: `INSTALL.md`.
+Each sparkle click opens a hidden Hermes session on your gateway and runs one rewrite. A second hidden session may score the result. The plugin sends nothing to a third party and does not send the composer message. No credentials, no telemetry, no self-update. Drafts under 8 characters are ignored.
 
 ## License
 

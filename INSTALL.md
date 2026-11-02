@@ -1,28 +1,14 @@
-# Installing Enhance Prompt (for agents)
+# Installing Enhance Prompt
 
-One package, two runtimes. Do both.
-
-## Desktop sparkle
-
-Copy `desktop/plugin.js` to `<HERMES_HOME>/desktop-plugins/enhance-prompt/plugin.js`.
-Folder name MUST be `enhance-prompt`.
-
-Disk plugins load uncompiled. Only these imports resolve:
-- `jsx` / `jsxs` from `react/jsx-runtime`
-- `useState` / `useEffect` / `useCallback` / `useRef` from `react`
-- `useValue`, `Button`, `Tip`, `Codicon`, `COMPOSER_AREAS` from `@hermes/plugin-sdk`
-
-Composer `actions` is a tight icon row — extra siblings next to the button get clipped. Score lives **inside** the button as `40→72`.
-
-`writeDraft` must select-all (`selectNodeContents`) then `insertText`. Collapse-to-end appends on revert.
-
-Reload: Ctrl/Cmd+K → Reload desktop plugins.
-
-## Agent tool
+One command installs both halves:
 
 ```
 hermes plugins install tuancookiez-hub/hermes-enhance-prompt
 hermes plugins enable enhance-prompt
 ```
 
-Shared templates: `prompts.py`. Keep in sync with the SYSTEM string in `desktop/plugin.js`.
+The Desktop sparkle loads from `desktop/plugin.js` inside that install. Reload desktop plugins if the button does not appear.
+
+Model: Settings → Plugins → Enhance Prompt. `auto` uses the chat's current model. Any other value is a model id.
+
+Shared rewrite text lives in `prompts.py`. The Desktop copy is the `SYSTEM` string in `desktop/plugin.js`. Keep them identical.

@@ -16,6 +16,7 @@ strip_wrappers = _mod.strip_wrappers
 SYSTEM = _mod.SYSTEM
 USER_TEMPLATE = _mod.USER_TEMPLATE
 MAX_CHARS = _mod.MAX_CHARS
+picked_model = _mod.picked_model
 
 
 def test_build_user_message_injects_input():
@@ -58,9 +59,18 @@ def test_max_chars_and_system_present():
     assert "exactly as much" in SYSTEM or "as much as the brief needs" in SYSTEM
 
 
+def test_picked_model():
+    assert picked_model(None) is None
+    assert picked_model("") is None
+    assert picked_model("auto") is None
+    assert picked_model(" AUTO ") is None
+    assert picked_model("grok-4") == "grok-4"
+
+
 if __name__ == "__main__":
     test_build_user_message_injects_input()
     test_strip_wrappers_thinking_and_channels()
     test_strip_wrappers_empty()
     test_max_chars_and_system_present()
+    test_picked_model()
     print("ok")

@@ -1,11 +1,20 @@
 name: enhance-prompt
-version: 0.4.1
-description: Sparkle beside Send that rewrites the composer draft as a numbered task list, plus a /enhance slash command and an enhance_prompt tool callable from CLI, gateway, and MCP.
+version: "0.5.0"
+description: "Sparkle beside Send that rewrites the composer draft without sending it. Click again to deepen the brief. Also registers /enhance and the enhance_prompt tool."
 author: tuancookiez-hub
 homepage: https://github.com/tuancookiez-hub/hermes-enhance-prompt
 license: MIT
-provides:
-  tools:
-    - enhance_prompt
-  commands:
-    - enhance
+requires_hermes: ">=0.21.5"
+provides_tools:
+  - enhance_prompt
+provides_hooks: []
+provides_middleware: []
+requires_env: []
+capabilities:
+  - llm.model_override
+config_schema:
+  model:
+    type: str
+    default: auto
+    label: Enhance model
+    description: "auto uses the model of the chat you are in. Paste a model id (the same string the model pill shows) to always enhance with that model instead. The id must be one your current provider can serve."

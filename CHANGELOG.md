@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.0] — 2026-11-03
+
+### Changed
+- Composer read/write uses `host.composer` instead of querying app markup. Required for catalog admission.
+- **Enhance model** setting (`auto` or a model id) in Settings → Plugins. `auto` uses the chat's current model. A pinned id is passed to the hidden session and to `/enhance`.
+- Install is one `hermes plugins install`. The sparkle ships inside the package.
+
+### Fixed
+- Agent `ctx.llm.complete` call matched the current host API (messages list, `.text` result). The old `system=` keyword no longer exists.
+- Stray pipe characters removed from the rewrite prompt.
+
 ## [0.4.1] — 2026-09-05
 
 ### Fixed
