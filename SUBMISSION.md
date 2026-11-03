@@ -6,15 +6,15 @@ A sparkle beside Send rewrites the composer draft into a structured brief withou
 
 ## Hermes surfaces used
 
-- Desktop `COMPOSER_AREAS.actions`, palette, and a keybind. Draft read/write is `host.composer.getDraft` / `setDraft`. No app DOM queries.
-- Hidden `session.create` + `prompt.submit` for the rewrite, and optionally a second hidden session to score it. `model` is passed only when the setting is not `auto`.
-- Agent: `ctx.register_tool(enhance_prompt)` and `ctx.register_command(enhance)`. Completions go through `ctx.llm.complete`. A non-auto model uses `llm.model_override`.
+- Desktop `COMPOSER_AREAS.actions`, palette, and a keybind (`mod+shift+e`). Draft read/write is `host.composer.getDraft` / `setDraft`. No app DOM queries.
+- `llm.oneshot` for the rewrite, and a second short `llm.oneshot` for the optional score, both with `session_id` set to the focused session so they take its model. Stateless: no agent turn, no tools, no history.
+- Agent: `ctx.register_tool(enhance_prompt)` and `ctx.register_command(enhance)`, with ctx bound at registration so the `handler(args, **kwargs)` / `handler(raw_args)` call shapes core uses work. Completions go through `ctx.llm.complete`.
 
 ## Risky behaviour
 
-- Opens hidden gateway sessions and spends the user's model credits (one rewrite, plus an optional score).
-- When Enhance model is not `auto`, pins that model id on those sessions. `auto` uses the chat's current model and does not override.
-- Reads plugin settings via `plugins.manage`. No credentials, no third-party network, no filesystem writes, no telemetry, no self-update.
+- Spends the user's model credits: one call per click, plus one for the score.
+- Uses the chat's current model and overrides nothing, so no `llm.model_override` consent is needed.
+- No credentials, no third-party network, no filesystem writes, no telemetry, no self-update. It never sends the composer message.
 
 ## Validation
 

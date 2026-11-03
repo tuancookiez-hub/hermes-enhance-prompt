@@ -9,20 +9,6 @@ MAX_CHARS = 0  # 0 = no cap. Let the model decide how long the brief
               # real limit; the user benefits from seeing everything
               # the model thinks the brief needs.
 
-AUTO = "auto"
-
-
-def picked_model(raw) -> str | None:
-    """Return a model id, or None when the caller should use the chat model.
-
-    Empty and ``auto`` (any case) mean follow the chat. Anything else is
-    passed through as a model id.
-    """
-    text = str(raw or "").strip()
-    if not text or text.lower() == AUTO:
-        return None
-    return text
-
 SYSTEM = """You are a prompt engineer. Rewrite user requests into clear, well-structured agent prompts.
 
 Your job is NOT to answer the request — it is to reformulate it so an AI agent can execute it correctly on the first attempt.

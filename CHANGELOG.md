@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.7.0] — 2026-11-03
+
+### Fixed
+- `enhance_prompt` and `/enhance` actually run: ctx is bound at registration, so the `handler(args, **kwargs)` and `handler(raw_args)` call shapes core uses no longer raise. Covered by `tests/test_register.py`, which calls both the way core does.
+- The timer and the keybind: the default is now `mod+shift+e` (`cmd+k` never matched, and `mod+k` lost to the command palette).
+
+### Changed
+- The Desktop sparkle and the score call `llm.oneshot` instead of creating hidden, tool-capable sessions and polling history. No session leaks, no tool side effects, no approval prompts in a session you cannot see.
+- Dropped the Enhance model setting, and with it the `llm.model_override` capability: `llm.oneshot` takes the model from the focused session, which the capability does not gate. The sparkle now always uses the chat's model.
+- Removed the polling backoff, history readers and quote wrappers that only served the session path.
+
 ## [0.6.0] — 2026-11-03
 
 ### Fixed

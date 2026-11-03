@@ -29,9 +29,6 @@ import {
 
 /* ─── Tunables ──────────────────────────────────────────────────────────── */
 
-const INIT_POLL_MS = 1200;     // first poll interval
-const MAX_POLL_MS = 3000;      // max poll interval (exponential backoff)
-const TIMEOUT_MS = 90_000;     // total session polling timeout
 const MIN_LEN = 8;
 
 /* ─── Rewrite prompt (inline — must stay in sync with prompts.py) ───────── */
@@ -137,11 +134,7 @@ async function rpc(method, params) {
   return unwrap(res);
 }
 
-/* ─── Composer DOM helpers ──────────────────────────────────────────────── */
-
-const AUTO = "auto";
-const MODEL_CACHE_MS = 15_000;
-let modelCache = { at: 0, value: AUTO };
+/* ─── Composer helpers ──────────────────────────────────────────────────── */
 
 function sid() {
   const atom = host.state && host.state.focusedSessionId;
@@ -172,38 +165,16 @@ async function writeDraft(text) {
   if (ok === false) throw new Error("composer rejected the rewrite");
 }
 
-async function savedModel() {
-  if (Date.now() - modelCache.at < MODEL_CACHE_MS) return modelCache.value;
-  try {
-    const listed = await rpc("plugins.manage", { action: "list" });
-    const rows = listed.plugins || [];
-    const row = rows.find((r) => r && (r.key === "enhance-prompt" || r.name === "enhance-prompt"));
-    const fields = (row && row.settings_schema) || [];
-    const field = fields.find((f) => f && f.key === "model");
-    const value = field && field.value != null ? String(field.value).trim() : AUTO;
-    modelCache = { at: Date.now(), value };
-    return value;
-  } catch {
-    return modelCache.value || AUTO;
-  }
-}
-
-async function closeQuiet(sessionId) {
-  if (!sessionId) return;
-  try {
-    await rpc("session.close", { session_id: sessionId });
-  } catch {
-    /* a hidden session that outlives the read is harmless */
-  }
-}
-
-async function modelPin() {
-  const saved = (await savedModel()) || AUTO;
-  if (!saved || saved.toLowerCase() === AUTO) {
-    const chat = chatModel();
-    return { model: chat || "", label: chat ? "chat model (" + chat + ")" : "chat model" };
-  }
-  return { model: saved, label: saved };
+async function oneshot(instructions, input, opts = {}) {
+  const chat = sid();
+  const res = await rpc("llm.oneshot", {
+    instructions,
+    input,
+    ...(chat ? { session_id: chat } : {}),
+    temperature: opts.temperature ?? 0.2,
+    max_tokens: opts.maxTokens || 1024,
+  });
+  return stripQuotes(res && typeof res.text === "string" ? res.text : "");
 }
 
 /* ─── Output cleaning ───────────────────────────────────────────────────── */
@@ -219,28 +190,6 @@ function stripQuotes(text) {
     .trim()
     .replace(/^['"`\u201c\u201d\u2018\u2019]+|['"`\u201c\u201d\u2018\u2019]+$/g, "")
     .trim();
-}
-
-function lastAssistant(messages) {
-  if (!Array.isArray(messages)) return "";
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (!m || m.role !== "assistant") continue;
-    if (typeof m.content === "string") return m.content;
-    if (Array.isArray(m.content)) {
-      const bits = m.content
-        .map((p) => {
-          if (typeof p === "string") return p;
-          if (p && typeof p.text === "string") return p.text;
-          if (p && typeof p.content === "string") return p.content;
-          return "";
-        })
-        .filter(Boolean);
-      if (bits.length) return bits.join("\n");
-    }
-    if (typeof m.text === "string") return m.text;
-  }
-  return "";
 }
 
 /* ─── G-EVAL scorer (LLM-as-judge) ─────────────────────────────────────── */
@@ -266,50 +215,16 @@ const SCORER_USER = (label, text) =>
   `${label}\n\nPROMPT TO EVALUATE:\n"""\n${text.slice(0, 4000)}
 """\n\nJSON:`;
 
-const TIMEOUT_SCORER_MS = 30_000;
-const POLL_SCORER_MS = 600;
-
-async function geValScore(label, text, pin) {
+async function geValScore(label, text) {
   if (!text || !text.trim()) {
     return { total: 0, parts: { clarity: 0, specificity: 0, actionability: 0, structure: 0, concreteness: 0 }, reason: "empty" };
   }
-  const created = await rpc("session.create", {
-    title: "Score prompt",
-    hidden: true,
-    messages: [{ role: "system", content: SCORER_SYSTEM }],
-    ...(pin && pin.model ? { model: pin.model } : {}),
+  const raw = await oneshot(SCORER_SYSTEM, SCORER_USER(label, text), {
+    temperature: 0,
+    maxTokens: 300,
   });
-  const sid = created.session_id;
-  if (!sid) throw new Error("scorer: session.create returned no session_id");
-  await rpc("prompt.submit", { session_id: sid, text: SCORER_USER(label, text) });
-
-  const start = Date.now();
-  let last = "";
-  let stable = 0;
-  try {
-    while (Date.now() - start < TIMEOUT_SCORER_MS) {
-      try {
-        const hist = await rpc("session.history", { session_id: sid });
-        const raw = stripQuotes(lastAssistant(hist.messages || hist.history || []));
-        if (raw && raw === last) {
-          stable += 1;
-          if (stable >= 2) {
-            const parsed = parseScore(raw);
-            if (parsed) return scaleTo100(parsed);
-          }
-        } else if (raw) {
-          last = raw;
-          stable = 0;
-        }
-      } catch {
-        /* keep polling */
-      }
-      await new Promise((r) => setTimeout(r, POLL_SCORER_MS));
-    }
-    return null;
-  } finally {
-    await closeQuiet(sid);
-  }
+  const parsed = raw ? parseScore(raw) : null;
+  return parsed ? scaleTo100(parsed) : null;
 }
 
 function parseScore(raw) {
@@ -361,25 +276,7 @@ function scoreTitle(ls) {
     .join("\n");
 }
 
-/* ─── Rewrite session ──────────────────────────────────────────────────── */
-
-function sleep(ms, signal) {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(new DOMException("aborted", "AbortError"));
-      return;
-    }
-    const t = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(t);
-        reject(new DOMException("aborted", "AbortError"));
-      },
-      { once: true }
-    );
-  });
-}
+/* ─── Rewrite call ─────────────────────────────────────────────────────── */
 
 const STAGE_TOAST = {
   1: "Stage 1: clarified brief.",
@@ -387,54 +284,16 @@ const STAGE_TOAST = {
   3: "Stage 3: phased plan appended.",
 };
 
-async function enhanceOnce(input, signal, stage, pin) {
-  const stageHint = STAGE_HINT[stage] || STAGE_HINT_CLARIFY;
-  const created = await rpc("session.create", {
-    title: "Enhance prompt",
-    hidden: true,
-    messages: [
-      { role: "system", content: SYSTEM },
-      { role: "system", content: stageHint },
-    ],
-    ...(pin && pin.model ? { model: pin.model } : {}),
-  });
-  const sid = created.session_id;
-  if (!sid) throw new Error("session.create returned no session_id");
-
-  const user = USER_WRAP.replace("{input}", input);
-  await rpc("prompt.submit", { session_id: sid, text: user });
-
-  const start = Date.now();
-  let last = "";
-  let stable = 0;
-  let pollMs = INIT_POLL_MS;
-
-  try {
-    while (Date.now() - start < TIMEOUT_MS) {
-      if (signal?.aborted) throw new DOMException("aborted", "AbortError");
-      try {
-        const hist = await rpc("session.history", { session_id: sid });
-        const next = stripQuotes(
-          lastAssistant(hist.messages || hist.history || [])
-        );
-        if (next && next === last) {
-          stable += 1;
-          if (stable >= 2) return next;
-        } else if (next) {
-          last = next;
-          stable = 0;
-        }
-      } catch {
-        /* keep polling */
-      }
-      await sleep(pollMs, signal);
-      pollMs = Math.min(pollMs * 1.5, MAX_POLL_MS);
-    }
-    if (last) return last;
-    throw new Error("timed out waiting for enhanced prompt");
-  } finally {
-    await closeQuiet(sid);
-  }
+async function enhanceOnce(input, signal, stage) {
+  const hint = STAGE_HINT[stage] || STAGE_HINT_CLARIFY;
+  if (signal?.aborted) throw new DOMException("aborted", "AbortError");
+  const text = await oneshot(
+    SYSTEM + "\n\n" + hint,
+    USER_WRAP.replace("{input}", input)
+  );
+  if (signal?.aborted) throw new DOMException("aborted", "AbortError");
+  if (!text) throw new Error("the model returned nothing");
+  return text;
 }
 
 /* ─── EnhancementButton ─────────────────────────────────────────────────── */
@@ -520,8 +379,8 @@ function EnhanceButton() {
     const nextStage = Math.min(stage.current + 1, 3);
     if (stage.current === 0) backup.current = text;
     lastScore.current = null;
-    const pin = await modelPin();
-    setModelLabel(pin.label);
+    const label = chatModel() ? "chat model: " + chatModel() : "chat model";
+    setModelLabel(label);
 
     cancel();
     const ac = new AbortController();
@@ -530,9 +389,7 @@ function EnhanceButton() {
     setError("");
 
     try {
-      const enhanced = stripQuotes(
-        await enhanceOnce(text, ac.signal, nextStage, pin)
-      );
+      const enhanced = await enhanceOnce(text, ac.signal, nextStage);
       if (ac.signal.aborted) return;
       if (!enhanced) throw new Error("empty rewrite");
 
@@ -548,7 +405,7 @@ function EnhanceButton() {
         kind: "info",
         message:
           (STAGE_TOAST[nextStage] || `Stage ${nextStage} appended.`) +
-          " (" + enhanced.length.toLocaleString() + " chars, " + pin.label + ")",
+          " (" + enhanced.length.toLocaleString() + " chars, " + label + ")",
       });
 
       after.current = await readDraft();
@@ -556,7 +413,7 @@ function EnhanceButton() {
       stage.current = nextStage;
 
       try {
-        const score = await geValScore("REWRITE", after.current, pin);
+        const score = await geValScore("REWRITE", after.current);
         if (ac.signal.aborted) return;
         if (score) {
           lastScore.current = {
@@ -584,17 +441,13 @@ function EnhanceButton() {
     if (!hasBackup || !after.current) return;
     const currentStage = stage.current || 1;
     const text = await readDraft();
-    const pin = await modelPin();
-    setModelLabel(pin.label);
     cancel();
     const ac = new AbortController();
     abort.current = ac;
     setEnhancing(true);
     setError("");
     try {
-      const extended = stripQuotes(
-        await enhanceOnce(text, ac.signal, currentStage, pin)
-      );
+      const extended = await enhanceOnce(text, ac.signal, currentStage);
       if (ac.signal.aborted) return;
       if (!extended) throw new Error("empty extension");
 
@@ -610,7 +463,7 @@ function EnhanceButton() {
       setHasBackup(true);
 
       try {
-        const score = await geValScore("REWRITE", after.current, pin);
+        const score = await geValScore("REWRITE", after.current);
         if (ac.signal.aborted) return;
         if (score) {
           lastScore.current = {
@@ -677,7 +530,7 @@ function EnhanceButton() {
         return "Stage 3: convert to phased plan";
       return "Stage 3: deepen the phased plan";
     }
-    return "Enhance prompt (clarify — Stage 1). Model: " + modelLabel + ". Change in Settings → Plugins.";
+    return "Enhance prompt (clarify — Stage 1). Runs on the " + modelLabel + ".";
   })();
 
   return jsxs("div", {
@@ -786,7 +639,7 @@ export default {
   id: "enhance-prompt",
   name: "Enhance Prompt",
   description:
-    "Sparkle beside Send that rewrites the composer draft without sending it. Click again to deepen the brief. Model follows the chat unless you set one in Settings → Plugins.",
+    "Sparkle beside Send that rewrites the composer draft without sending it. Click again to deepen the brief. Runs one stateless model call on the chat you are in.",
   defaultEnabled: true,
 
   register(ctx) {
@@ -808,7 +661,7 @@ export default {
       },
     });
 
-    const KEY = navigator.platform.includes("Mac") ? "cmd+k" : "ctrl+k";
+    const KEY = "mod+shift+e";
     ctx.register({
       id: "keybind",
       area: KEYBINDS_AREA,

@@ -8,9 +8,9 @@ Sparkle beside Send on [Hermes Desktop](https://hermes-agent.nousresearch.com). 
 - Score on the button: `40→72` (before → after)
 - Click the discard icon to revert (replaces the draft, does not append)
 - Click while spinning to cancel the wait
-- Ctrl/Cmd+K → **Enhance prompt**
+- Cmd/Ctrl+Shift+E → **Enhance prompt**
 
-Uses your **current Desktop model** via a hidden Hermes session. Same language as the original. Does not invent tech you did not name. Does not answer the question — it expands it.
+Runs one stateless model call on your **current chat's model**. Same language as the original. Does not invent tech you did not name. Does not answer the question — it expands it.
 
 ## Demo
 
@@ -45,22 +45,15 @@ hermes plugins install tuancookiez-hub/hermes-enhance-prompt
 hermes plugins enable enhance-prompt
 ```
 
-One package covers both halves. The sparkle loads from `desktop/plugin.js` inside the install. Reload desktop plugins (Ctrl/Cmd+K → Reload desktop plugins) if the button is missing.
+One package covers both halves. The sparkle loads from `desktop/plugin.js` inside the install. Reload desktop plugins (Cmd/Ctrl+K → Reload desktop plugins) if the button is missing.
 
 ## Which model it uses
 
-Default is **auto**: the model of the chat you are in.
-
-To pin a different model:
-
-1. Hermes Desktop → Settings → Plugins → Enhance Prompt
-2. Set **Enhance model** to a model id (the same string the model pill shows), or back to `auto`
-
-The sparkle tooltip shows which one it will use. The id has to be one your current provider can serve. `/enhance` and the `enhance_prompt` tool read the same setting. A pinned model needs the install-time model-override consent; `auto` does not.
+The model of the chat you are in. To use another one for a single draft, switch the chat model before clicking — there is no separate setting to keep in sync.
 
 ## Disclosure
 
-Each sparkle click opens a hidden Hermes session on your gateway and runs one rewrite. A second hidden session may score the result. The plugin sends nothing to a third party and does not send the composer message. No credentials, no telemetry, no self-update. Drafts under 8 characters are ignored.
+Each sparkle click runs **one stateless `llm.oneshot` call** on your gateway, using the current chat's model. It is not an agent turn: no tools run and nothing lands in a session you cannot see, so a draft that reads like a task cannot make it execute anything. The optional score is a second short call. Cancel stops the wait; the in-flight call may still finish. The plugin sends nothing to a third party, does not send the composer message, stores no credentials, has no telemetry and no self-update. Drafts under 8 characters are ignored.
 
 ## License
 

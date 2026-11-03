@@ -21,9 +21,9 @@ import json
 import logging
 from typing import Any, Dict
 
-from .prompts import SYSTEM, build_user_message, picked_model, strip_wrappers, MAX_CHARS
+from .prompts import SYSTEM, build_user_message, strip_wrappers, MAX_CHARS
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 logger = logging.getLogger(__name__)
 
 TOOL_NAME = "enhance_prompt"
@@ -57,14 +57,6 @@ SCHEMA: Dict[str, Any] = {
 }
 
 
-def _model(ctx) -> str | None:
-    try:
-        raw = ctx.get_config("model", "auto")
-    except Exception:  # noqa: BLE001 - missing config is auto
-        raw = "auto"
-    return picked_model(raw)
-
-
 def _text(result) -> str:
     if result is None:
         return ""
@@ -88,28 +80,14 @@ def _enhance_text(ctx, input_text: str, max_chars: int) -> str:
 
     user_msg = build_user_message(input_text)
     max_tok = min(16384, max(256, max_chars * 2)) if max_chars else 16384
-    model = _model(ctx)
-    kwargs: Dict[str, Any] = {"temperature": 0.2, "max_tokens": max_tok}
-    if model:
-        kwargs["model"] = model
-    try:
-        raw = ctx.llm.complete(
-            [
-                {"role": "system", "content": SYSTEM},
-                {"role": "user", "content": user_msg},
-            ],
-            **kwargs,
-        )
-    except Exception as exc:
-        if model and "allow_model_override" in str(exc):
-            raise RuntimeError(
-                "Enhance model is set to "
-                + model
-                + ", but this install has not allowed model override. "
-                + "Set it back to auto in Settings → Plugins → Enhance Prompt, "
-                + "or allow llm.model_override for enhance-prompt."
-            ) from exc
-        raise
+    raw = ctx.llm.complete(
+        [
+            {"role": "system", "content": SYSTEM},
+            {"role": "user", "content": user_msg},
+        ],
+        temperature=0.2,
+        max_tokens=max_tok,
+    )
     text = strip_wrappers(_text(raw)).strip()
     if not text:
         raise RuntimeError("enhance_prompt: empty response from model")
@@ -153,16 +131,21 @@ def _slash_enhance(ctx, args: str = "") -> str:
 
 
 def register(ctx) -> None:
-    """Wire the tool + slash command into the running Hermes agent."""
+    """Wire the tool + slash command into the running Hermes agent.
+
+    Hermes calls tool handlers as ``handler(args, **kwargs)`` and command
+    handlers as ``handler(raw_args)``, so ctx is bound here rather than
+    expected as a leading argument.
+    """
     ctx.register_tool(
         name=TOOL_NAME,
         toolset="enhance_prompt",
         schema=SCHEMA,
-        handler=_tool_handler,
+        handler=lambda params, **kw: _tool_handler(ctx, params, **kw),
     )
     ctx.register_command(
         name="enhance",
         description="Rewrite a prompt as a numbered task list. Usage: /enhance <text>",
-        handler=_slash_enhance,
+        handler=lambda raw: _slash_enhance(ctx, raw),
         args_hint="<prompt text>",
     )
